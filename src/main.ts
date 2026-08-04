@@ -12,6 +12,7 @@ import {
 } from "./util.ts";
 
 const VERSION = "mdrfc 0.1.0";
+const DEFAULT_PORT = 2119;
 
 function printHelp(): void {
   console.log(`
@@ -28,7 +29,7 @@ USAGE
 
 FLAGS
   -w, --web                 serve via local HTTP server
-  -p, --port <n>            server port (default 3000, auto-increment if busy)
+  -p, --port <n>            server port (default ${DEFAULT_PORT}, auto-increment if busy)
   --no-open                 don't auto-open browser (use with --web)
       --no-color            strip ANSI colors → pure RFC text
       --no-frontmatter      hide the frontmatter block (still stripped from body)
@@ -73,7 +74,7 @@ async function main() {
   const { values, positionals } = parseArgs({
     options: {
       web: { type: "boolean", short: "w", default: false },
-      port: { type: "string", default: "3000" },
+      port: { type: "string", default: String(DEFAULT_PORT) },
       open: { type: "boolean", default: true },
       "no-open": { type: "boolean", default: false },
       color: { type: "boolean", default: true },
@@ -147,7 +148,7 @@ async function main() {
   };
 
   if (values.web) {
-    const port = parseInt(values.port as string, 10) || 3000;
+    const port = parseInt(values.port as string, 10) || DEFAULT_PORT;
     const shouldOpen = values.open && !values["no-open"];
     await startServer({
       content,

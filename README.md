@@ -46,7 +46,7 @@ cat foo.md | mdrfc --web  stdin + web
 
 FLAGS
   -w, --web                 serve via local HTTP server
-  -p, --port <n>            server port (default 3000, auto-increment if busy)
+  -p, --port <n>            server port (default 2119, auto-increment if busy)
       --no-open             don't auto-open browser (use with --web)
       --no-color            strip ANSI colors → pure RFC text
       --no-frontmatter      hide the frontmatter block (still stripped from body)
