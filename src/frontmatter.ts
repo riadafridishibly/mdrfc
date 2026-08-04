@@ -105,6 +105,16 @@ function parseNode(lines: string[], cur: Cursor, minIndent: number): FmValue {
     : parseMap(lines, cur, indent);
 }
 
+/** Does the next content line open a `-` item at exactly `indent`? */
+function seqFollowsAt(lines: string[], cur: Cursor, indent: number): boolean {
+  for (let i = cur.i; i < lines.length; i++) {
+    if (skippable(lines[i])) continue;
+    const t = lines[i].trim();
+    return indentOf(lines[i]) === indent && (t === "-" || t.startsWith("- "));
+  }
+  return false;
+}
+
 function parseMap(lines: string[], cur: Cursor, indent: number): Record<string, FmValue> {
   const out: Record<string, FmValue> = {};
   while (cur.i < lines.length) {
@@ -149,7 +159,9 @@ function parseValueAfterKey(
   }
   // Anchors are not resolved, but `key: &name` still introduces a nested node.
   if (head === "" || head.startsWith("#") || /^&\S+$/.test(head)) {
-    const nested = parseNode(lines, cur, indent + 1);
+    // A block sequence is allowed to sit at its key's own indentation
+    // (`tags:\n- a`); a nested map always has to be deeper.
+    const nested = parseNode(lines, cur, seqFollowsAt(lines, cur, indent) ? indent : indent + 1);
     return nested ?? null;
   }
   return parseScalar(joinContinuation(lines, cur, indent, head));

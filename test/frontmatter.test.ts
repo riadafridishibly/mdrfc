@@ -122,6 +122,27 @@ describe("yaml collections", () => {
     });
   });
 
+  test("block sequence at the key's own indentation", () => {
+    expect(data("---\ntitle: T\ntags:\n- a\n- b\nauthor: R\n---\n")).toEqual({
+      title: "T",
+      tags: ["a", "b"],
+      author: "R",
+    });
+  });
+
+  test("unindented sequence nested under a map", () => {
+    expect(data("---\nmeta:\n  tags:\n  - a\n  - b\n  status: draft\n---\n")).toEqual({
+      meta: { tags: ["a", "b"], status: "draft" },
+    });
+  });
+
+  test("unindented sequence of maps", () => {
+    expect(data("---\npeople:\n- name: A\n  role: editor\n- name: B\nk: v\n---\n")).toEqual({
+      people: [{ name: "A", role: "editor" }, { name: "B" }],
+      k: "v",
+    });
+  });
+
   test("flow sequence spanning lines", () => {
     expect(data("---\ntags: [a,\n  b,\n  c]\n---\n")).toEqual({ tags: ["a", "b", "c"] });
   });
