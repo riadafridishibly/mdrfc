@@ -14,7 +14,20 @@ export function renderWeb(
   const marked = new Marked();
   const body = marked.parse(md) as string;
   const theme = opts.theme;
-  return htmlTemplate(body, opts.width, theme, reloadToken);
+  return htmlTemplate(openExternalLinksInNewTab(body), opts.width, theme, reloadToken);
+}
+
+/**
+ * Add `target="_blank" rel="noopener noreferrer"` to external links so they
+ * open in a new tab instead of navigating the viewer away (VSCode-style UX).
+ * Only affects http(s) and protocol-relative URLs; anchors and relative
+ * links are left untouched.
+ */
+function openExternalLinksInNewTab(html: string): string {
+  return html.replace(
+    new RegExp('<a href="((?:https?:)?//[^"]*)"', "g"),
+    '<a href="$1" target="_blank" rel="noopener noreferrer"'
+  );
 }
 
 function htmlTemplate(
