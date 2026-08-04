@@ -530,11 +530,14 @@ function htmlTemplate(
     border-radius: 4px; padding: 5px 6px;
   }
   #mdrfc-panel .font-box { position: relative; }
+  /* Overlays the rows below instead of shoving them down the panel. */
   #mdrfc-panel .font-list {
+    position: absolute; top: 100%; left: 0; right: 0; z-index: 1;
     margin: 4px 0 0; padding: 4px 0; list-style: none;
     max-height: 210px; overflow-y: auto;
     border: 1px solid var(--border); border-radius: 4px;
     background: var(--bg);
+    box-shadow: 0 6px 18px rgba(0,0,0,.18);
   }
   #mdrfc-panel .font-list:empty { display: none; }
   #mdrfc-panel .font-list li {
