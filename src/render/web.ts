@@ -68,7 +68,8 @@ function renderFrontmatterHtml(data: Record<string, FmValue>): string {
  * Frontmatter is stripped from the body, shown as a metadata block (unless
  * disabled) and its `title` becomes the document title.
  * Injects a tiny WebSocket client for live-reload when `reloadToken` is set,
- * and a settings panel (theme / font / size) persisted in localStorage.
+ * and a settings panel (theme / searchable font picker / size) persisted in
+ * localStorage.
  * `tree` (directory mode) adds a fixed sidebar listing every .md file.
  */
 export function renderWeb(
@@ -528,6 +529,26 @@ function htmlTemplate(
     background: var(--bg); color: var(--fg); border: 1px solid var(--border);
     border-radius: 4px; padding: 5px 6px;
   }
+  #mdrfc-panel .font-box { position: relative; }
+  #mdrfc-panel .font-list {
+    margin: 4px 0 0; padding: 4px 0; list-style: none;
+    max-height: 210px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: var(--bg);
+  }
+  #mdrfc-panel .font-list:empty { display: none; }
+  #mdrfc-panel .font-list li {
+    padding: 4px 8px; cursor: pointer; display: flex; gap: 8px;
+    align-items: baseline; justify-content: space-between;
+  }
+  #mdrfc-panel .font-list li.active,
+  #mdrfc-panel .font-list li:hover { background: var(--code-bg); }
+  #mdrfc-panel .tag {
+    color: var(--muted); font-size: 10px; text-transform: uppercase;
+    letter-spacing: .04em; flex: none;
+  }
+  #mdrfc-panel .font-list .sample { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #mdrfc-panel .font-empty { padding: 6px 8px; color: var(--muted); }
   #mdrfc-panel .size-row { display: flex; gap: 8px; align-items: center; }
   #mdrfc-panel input[type=range] { flex: 1; }
   #mdrfc-panel .close {
@@ -630,13 +651,12 @@ ${body}
       <option value="dark">Dark</option>
     </select>
   </div>
-  <div class="row">
-    <label for="mdrfc-font">Font</label>
-    <select id="mdrfc-font"></select>
-  </div>
-  <div class="row">
-    <label for="mdrfc-font-custom">Custom font name</label>
-    <input id="mdrfc-font-custom" type="text" placeholder="e.g. Comic Sans MS" spellcheck="false">
+  <div class="row font-box">
+    <label for="mdrfc-font">Font <span class="tag" id="mdrfc-font-count"></span></label>
+    <input id="mdrfc-font" type="text" placeholder="Search installed fonts&hellip;" spellcheck="false"
+           autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list"
+           aria-controls="mdrfc-font-list">
+    <ul id="mdrfc-font-list" class="font-list" role="listbox"></ul>
   </div>
   <div class="row">
     <label for="mdrfc-size">Font size <span id="mdrfc-size-val"></span></label>
@@ -662,8 +682,9 @@ ${reloadScript}
   var panel = document.getElementById("mdrfc-panel");
   var closeBtn = document.getElementById("mdrfc-close");
   var themeSel = document.getElementById("mdrfc-theme");
-  var fontSel = document.getElementById("mdrfc-font");
-  var fontCustom = document.getElementById("mdrfc-font-custom");
+  var fontInput = document.getElementById("mdrfc-font");
+  var fontList = document.getElementById("mdrfc-font-list");
+  var fontCount = document.getElementById("mdrfc-font-count");
   var sizeRange = document.getElementById("mdrfc-size");
   var sizeNum = document.getElementById("mdrfc-size-num");
   var sizeVal = document.getElementById("mdrfc-size-val");
@@ -695,7 +716,7 @@ ${reloadScript}
   setTheme(t);
 
   var f = rd("font", "");
-  fontCustom.value = f;
+  fontInput.value = f;
   applyFont(f);
 
   var s = rd("size", "");
@@ -705,16 +726,15 @@ ${reloadScript}
   themeSel.addEventListener("change", function(){
     setTheme(themeSel.value); wr("theme", themeSel.value);
   });
-  fontSel.addEventListener("change", function(){
-    var v = fontSel.value;
-    if(!v) return;
-    fontCustom.value = v;
+  fontInput.addEventListener("input", function(){
+    var v = fontInput.value.trim();
     applyFont(v); wr("font", v);
+    renderFonts(v);
   });
-  fontCustom.addEventListener("input", function(){
-    var v = fontCustom.value.trim();
-    applyFont(v); wr("font", v);
-    fontSel.value = v && Array.prototype.some.call(fontSel.options, function(o){ return o.value===v; }) ? v : "";
+  fontInput.addEventListener("focus", function(){ renderFonts(fontInput.value.trim()); });
+  fontInput.addEventListener("keydown", onFontKey);
+  document.addEventListener("click", function(e){
+    if(!fontInput.contains(e.target) && !fontList.contains(e.target)) hideFonts();
   });
   function onSize(){
     var v = sizeRange.value;
@@ -748,27 +768,116 @@ ${reloadScript}
   closeBtn.addEventListener("click", closePanel);
   document.addEventListener("keydown", function(e){ if(e.key==="Escape") closePanel(); });
 
+  // ── font picker: search over every installed family, monospace first ──
+  var MAX_ROWS = 100;
+  var fonts = [];        // [{name, mono}]
+  var shown = [];        // currently rendered subset
+  var active = -1;
   var fontsLoaded = false;
+
   function loadFonts(){
     if(fontsLoaded) return; fontsLoaded = true;
     fetch("/_fonts").then(function(r){ return r.json(); }).then(function(list){
-      var cur = fontCustom.value.trim();
-      fontSel.innerHTML = "";
-      var placeholder = document.createElement("option");
-      placeholder.value = ""; placeholder.textContent = cur ? "(custom: "+cur+")" : "(default)";
-      fontSel.appendChild(placeholder);
-      if(list && list.length){
-        var sep = document.createElement("option");
-        sep.disabled = true; sep.textContent = "— system monospace —";
-        fontSel.appendChild(sep);
-        list.forEach(function(name){
-          var o = document.createElement("option");
-          o.value = name; o.textContent = name;
-          fontSel.appendChild(o);
-        });
-      }
-      fontSel.value = cur && Array.prototype.some.call(fontSel.options, function(o){ return o.value===cur; }) ? cur : "";
-    }).catch(function(){ /* fonts endpoint unavailable; picker stays minimal */ });
+      fonts = list || [];
+      var mono = 0;
+      fonts.forEach(function(f){ if(f.mono) mono++; });
+      fontCount.textContent = fonts.length ? "(" + mono + " mono of " + fonts.length + ")" : "";
+      if(document.activeElement === fontInput) renderFonts(fontInput.value.trim());
+    }).catch(function(){ /* fonts endpoint unavailable; typing a family still works */ });
+  }
+
+  // Rank: exact > prefix > word start > substring > subsequence. Monospace
+  // wins ties — proportional text breaks the RFC column alignment.
+  function score(name, q){
+    if(!q) return 1;
+    var n = name.toLowerCase();
+    if(n === q) return 100;
+    var at = n.indexOf(q);
+    if(at === 0) return 80;
+    if(at > 0) return n[at-1] === " " ? 60 : 40;
+    var i = 0;
+    for(var c = 0; c < n.length && i < q.length; c++) if(n[c] === q[i]) i++;
+    return i === q.length ? 20 : 0;
+  }
+
+  function renderFonts(query){
+    var q = query.toLowerCase();
+    shown = fonts
+      .map(function(f){ return { f: f, s: score(f.name, q) }; })
+      .filter(function(r){ return r.s > 0; })
+      .sort(function(a, b){
+        return (b.s - a.s) || (b.f.mono - a.f.mono) || a.f.name.localeCompare(b.f.name);
+      })
+      .map(function(r){ return r.f; });
+
+    var extra = shown.length - MAX_ROWS;
+    shown = shown.slice(0, MAX_ROWS);
+    fontList.innerHTML = "";
+    if(!fonts.length) return;                        // still loading, or endpoint down
+    if(!shown.length){
+      fontList.appendChild(row("No installed family matches — it is applied as typed.", "", true));
+      return;
+    }
+    shown.forEach(function(f, i){
+      var li = row(f.name, f.mono ? "mono" : "", false);
+      li.style.fontFamily = '"' + f.name.replace(/"/g, "") + '", ui-monospace, monospace';
+      li.addEventListener("click", function(){ pickFont(f.name); });
+      li.addEventListener("mousemove", function(){ setActive(i); });
+      fontList.appendChild(li);
+    });
+    if(extra > 0) fontList.appendChild(row("+" + extra + " more — keep typing", "", true));
+    setActive(-1);
+    fontInput.setAttribute("aria-expanded", "true");
+  }
+
+  function row(text, tag, muted){
+    var li = document.createElement("li");
+    if(muted){ li.className = "font-empty"; li.textContent = text; return li; }
+    li.setAttribute("role", "option");
+    var s = document.createElement("span");
+    s.className = "sample"; s.textContent = text;
+    li.appendChild(s);
+    if(tag){
+      var t = document.createElement("span");
+      t.className = "tag"; t.textContent = tag;
+      li.appendChild(t);
+    }
+    return li;
+  }
+
+  function setActive(i){
+    active = i;
+    var items = fontList.querySelectorAll("li[role=option]");
+    for(var k = 0; k < items.length; k++) items[k].classList.toggle("active", k === i);
+    if(i >= 0 && items[i]) items[i].scrollIntoView({ block: "nearest" });
+  }
+
+  function pickFont(name){
+    fontInput.value = name;
+    applyFont(name); wr("font", name);
+    hideFonts();
+  }
+
+  function hideFonts(){
+    fontList.innerHTML = "";
+    active = -1;
+    fontInput.setAttribute("aria-expanded", "false");
+  }
+
+  function onFontKey(e){
+    var open = shown.length > 0 && fontList.childElementCount > 0;
+    if(e.key === "ArrowDown" || e.key === "ArrowUp"){
+      if(!open){ renderFonts(fontInput.value.trim()); return; }
+      e.preventDefault();
+      var next = active + (e.key === "ArrowDown" ? 1 : -1);
+      setActive((next + shown.length) % shown.length);
+    } else if(e.key === "Enter" && open && active >= 0){
+      e.preventDefault();
+      pickFont(shown[active].name);
+    } else if(e.key === "Escape" && open){
+      e.stopPropagation();               // close the list, keep the panel open
+      hideFonts();
+    }
   }
 })();
 </script>

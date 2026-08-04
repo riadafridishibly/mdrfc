@@ -168,7 +168,7 @@ export async function startServer(opts: ServerOpts): Promise<void> {
         return new Response("Upgrade required", { status: 426 });
       }
 
-      // System monospace font list for the settings panel
+      // Installed font families (monospace flagged) for the settings panel
       if (u.pathname === "/_fonts") {
         return new Response(JSON.stringify(listSystemFonts()), {
           headers: { "content-type": "application/json; charset=utf-8" },

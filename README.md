@@ -146,6 +146,21 @@ its extended syntax works:
 These operators only apply to paths, so a query using any of them filters files
 and skips content search.
 
+## Settings panel
+
+The gear button in the web view opens theme, font and size controls, all
+persisted in `localStorage`.
+
+The font field searches every family installed on the machine — fixed-pitch
+ones are tagged `mono` and sort first, since proportional text breaks the
+72-column alignment, but nothing is hidden. Each row previews itself in its
+own family. A name that is not installed still applies as typed, so a webfont
+you have loaded some other way works too.
+
+Families are collected from `fc-list` when fontconfig is present, plus a
+direct scan of the OS font directories that reads only each font's `name` and
+`post` tables.
+
 ## Live reload
 
 With `--web` and a **file** (not stdin), mdrfc watches the file. On every save:
@@ -174,6 +189,7 @@ src/
   util.ts          width/port helpers, stdin, less paging, ANSI strip, slugs
   frontmatter.ts   YAML/TOML frontmatter split + subset parser
   search.ts        fzf path ranking + heading/content scan, mtime-cached
+  fonts.ts         installed font families via fc-list + sfnt table scan
   open.ts          cross-platform browser open
   server.ts        Bun.serve + WebSocket live-reload + file watcher + md tree
   client/
