@@ -3,6 +3,15 @@ import { html, render, useState, useEffect, useRef, useCallback } from "/_preact
 const CFG = window.__mdrfc || {};
 const GROUP = { local: "This document", file: "Files", heading: "Headings", text: "Content" };
 
+/** fzf's extended search operators, shown as a legend before anything is typed. */
+const SYNTAX = [
+  ["^abc", "starts"],
+  ["abc$", "ends"],
+  ["'abc", "exact"],
+  ["!abc", "omit"],
+  ["a|b", "either"],
+];
+
 /** Match every whitespace-separated term against `text`; returns the earliest hit. */
 function matchTerms(text, terms) {
   const low = text.toLowerCase();
@@ -120,6 +129,7 @@ function Palette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [remote, setRemote] = useState([]);
+  const [extended, setExtended] = useState(false);
   const [sel, setSel] = useState(0);
   const inputRef = useRef(null);
   const listRef = useRef(null);
@@ -155,13 +165,17 @@ function Palette() {
   useEffect(() => {
     if (!open || !CFG.dirMode || !query.trim()) {
       setRemote([]);
+      setExtended(false);
       return;
     }
     const ctrl = new AbortController();
     const t = setTimeout(() => {
       fetch("/_search?q=" + encodeURIComponent(query), { signal: ctrl.signal })
         .then((r) => r.json())
-        .then((list) => setRemote(arrange(list).map((h, i) => ({ ...h, key: "r" + i }))))
+        .then((data) => {
+          setRemote(arrange(data.hits).map((h, i) => ({ ...h, key: "r" + i })));
+          setExtended(data.extended);
+        })
         .catch(() => {});
     }, 80);
     return () => {
@@ -247,6 +261,15 @@ function Palette() {
                 `;
               })}
         </ul>
+        ${extended
+          ? html`<div class="mdrfc-p-hint active">
+              Matching paths only — content search is off while the query uses operators.
+            </div>`
+          : CFG.dirMode && !query
+            ? html`<div class="mdrfc-p-hint">
+                ${SYNTAX.map(([op, label]) => html`<span><code>${op}</code>${label}</span>`)}
+              </div>`
+            : null}
         <div class="mdrfc-p-foot">
           <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
           <span><kbd>↵</kbd> open</span>

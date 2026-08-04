@@ -10,7 +10,7 @@ import { renderWeb, type TreeNode } from "./render/web.ts";
 import { findFreePort, SKIP_DIRS } from "./util.ts";
 import { openBrowser } from "./open.ts";
 import { listSystemFonts } from "./fonts.ts";
-import { search } from "./search.ts";
+import { isExtendedQuery, search } from "./search.ts";
 import type { RenderOpts } from "./util.ts";
 import preactSrc from "htm/preact/standalone.module.js" with { type: "text" };
 import paletteSrc from "./client/palette.js" with { type: "text" };
@@ -186,10 +186,16 @@ export async function startServer(opts: ServerOpts): Promise<void> {
         });
       }
 
-      // Full-text search across the served directory.
+      // Full-text search across the served directory. `extended` tells the
+      // palette the query was read as a path filter, so it can say why no
+      // content results came back.
       if (u.pathname === "/_search") {
-        const hits = baseDir ? search(baseDir, u.searchParams.get("q") ?? "") : [];
-        return new Response(JSON.stringify(hits), {
+        const q = u.searchParams.get("q") ?? "";
+        const body = {
+          hits: baseDir ? search(baseDir, q) : [],
+          extended: isExtendedQuery(q.trim()),
+        };
+        return new Response(JSON.stringify(body), {
           headers: { "content-type": "application/json; charset=utf-8" },
         });
       }

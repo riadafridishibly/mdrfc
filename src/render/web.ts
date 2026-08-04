@@ -587,6 +587,16 @@ function htmlTemplate(
   .mdrfc-p-row mark { background: transparent; color: var(--link); font-weight: 700; }
   .mdrfc-p-row.active mark { text-decoration: underline; }
   .mdrfc-p-empty { padding: 14px 15px; color: var(--muted); font-size: 13px; }
+  .mdrfc-p-hint {
+    display: flex; flex-wrap: wrap; gap: 3px 12px;
+    padding: 7px 15px; border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 11px;
+  }
+  .mdrfc-p-hint code {
+    background: var(--code-bg); color: var(--fg);
+    border-radius: 3px; padding: 0 4px; margin-right: 5px; font-size: 11px;
+  }
+  .mdrfc-p-hint.active { color: var(--link); }
   .mdrfc-p-foot {
     display: flex; gap: 14px; padding: 7px 15px;
     border-top: 1px solid var(--border); color: var(--muted); font-size: 11px;

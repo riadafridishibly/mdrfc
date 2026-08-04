@@ -125,7 +125,7 @@ export function fuzzyMatch(
  * True when the query uses fzf's extended syntax — `^prefix`, `suffix$`,
  * `'exact`, `!negate`, `|`.
  */
-function isExtendedQuery(q: string): boolean {
+export function isExtendedQuery(q: string): boolean {
   return q.split(/\s+/).some((t) => t === "|" || /^[\^!']/.test(t) || /\$$/.test(t));
 }
 

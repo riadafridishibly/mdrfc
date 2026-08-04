@@ -121,6 +121,31 @@ Give `mdrfc` a **directory** and it scans for `*.md` files (hidden files,
 mdrfc docs/ --web
 ```
 
+## Search
+
+In `--web` mode, **Cmd-K** (or Ctrl-K) opens a command palette.
+
+Serving a single file or stdin, it searches that document's headings — an empty
+query lists the whole outline. Serving a directory, it also searches every
+`.md` file: filenames are matched fuzzily, headings and body text by substring,
+with each result linking to its nearest heading so you land on the right
+section rather than the top of the file.
+
+Filenames are ranked with [fzf](https://github.com/junegunn/fzf)'s algorithm, so
+its extended syntax works:
+
+| Query    | Matches                          |
+| -------- | -------------------------------- |
+| `cfg`    | fuzzy — `guide/advanced-config.md` |
+| `^guide` | paths starting with `guide`      |
+| `.md$`   | paths ending in `.md`            |
+| `'exact` | paths containing exactly `exact` |
+| `!draft` | paths *not* containing `draft`   |
+| `a \| b` | either `a` or `b`                |
+
+These operators only apply to paths, so a query using any of them filters files
+and skips content search.
+
 ## Live reload
 
 With `--web` and a **file** (not stdin), mdrfc watches the file. On every save:
@@ -146,10 +171,13 @@ Each produces a standalone executable named `mdrfc-<os>-<arch>`.
 ```
 src/
   main.ts          CLI entry, flag parsing, dispatch
-  util.ts          width/port helpers, stdin, less paging, ANSI strip
+  util.ts          width/port helpers, stdin, less paging, ANSI strip, slugs
   frontmatter.ts   YAML/TOML frontmatter split + subset parser
+  search.ts        fzf path ranking + heading/content scan, mtime-cached
   open.ts          cross-platform browser open
   server.ts        Bun.serve + WebSocket live-reload + file watcher + md tree
+  client/
+    palette.js     Cmd-K command palette (Preact + htm, served as a module)
   render/
     term.ts        marked + marked-terminal renderer; dir-mode tree
     web.ts         marked HTML + CSS template + sidebar filetree
@@ -159,9 +187,16 @@ scripts/
 
 ## Dependencies
 
-Only two runtime deps:
+Five runtime deps, none with transitive dependencies of their own:
 
 - [`marked`](https://github.com/markedjs/marked) — markdown parser (shared by both renderers)
 - [`marked-terminal`](https://github.com/mikaelbr/marked-terminal) — terminal rendering
+- [`fzf`](https://github.com/ajitid/fzf-for-js) — fzf's matching algorithm, for filename ranking
+- [`preact`](https://preactjs.com) + [`htm`](https://github.com/developit/htm) — the command palette
 
 Everything else (HTTP server, WebSocket, file watch, arg parsing, browser launch) uses Bun or Node built-ins.
+
+`preact` and `htm` ship to the browser as a single 13 KB bundle, served from
+`/_preact.js` rather than inlined so it stays cached across navigation. There is
+no frontend build step — the palette is authored with htm's tagged templates and
+text-imported into the binary.

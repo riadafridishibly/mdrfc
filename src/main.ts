@@ -43,6 +43,13 @@ FRONTMATTER
   terminal, a definition list on the web (where \`title\` also becomes the page
   title). Use --no-frontmatter to hide the header.
 
+SEARCH (--web)
+  Cmd-K / Ctrl-K opens a command palette. On a single file it searches that
+  document's headings; on a directory it also searches filenames, headings
+  and body text, jumping to the nearest heading. Filenames are ranked with
+  fzf, so ^starts, ends$, 'exact, !omit and a|b work — these apply to paths
+  only, so such a query filters files and skips content search.
+
 DIRECTORY MODE
   Passing a directory instead of a file scans it for *.md files (hidden
   files and node_modules/.git/etc. are skipped) and shows a filetree:
