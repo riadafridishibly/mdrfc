@@ -24,6 +24,7 @@ import { join } from "node:path";
  */
 
 const MAX_NAME_BYTES = 256 * 1024; // `name` tables are KBs; cap a corrupt length
+const MAX_TTC_FONTS = 256; // real collections hold a handful; cap a corrupt count
 
 export interface SystemFont {
   name: string;
@@ -112,7 +113,9 @@ function fontDirs(): string[] {
   ];
 }
 
-function scanDir(dir: string, out: Map<string, boolean>): void {
+/** Recursively add every family found under `dir`. Exported for tests, which
+ *  need a scan they can point at a fixture directory. */
+export function scanDir(dir: string, out: Map<string, boolean>): void {
   let entries: ReturnType<typeof readdirSync>;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -141,9 +144,12 @@ function parseFontFile(path: string, out: Map<string, boolean>): void {
       return;
     }
     // TrueType Collection: header (tag, u32 version, u32 numFonts, u32[numFonts] offsets)
-    const offsets = readAt(fd, 12, head.readUInt32BE(8) * 4);
+    const numFonts = Math.min(head.readUInt32BE(8), MAX_TTC_FONTS);
+    const offsets = readAt(fd, 12, numFonts * 4);
     if (!offsets) return;
     for (let i = 0; i + 4 <= offsets.length; i += 4) parseSfnt(fd, offsets.readUInt32BE(i), out);
+  } catch {
+    // One malformed font is not worth losing the rest of the scan over.
   } finally {
     closeSync(fd);
   }
@@ -182,8 +188,8 @@ function parseSfnt(fd: number, base: number, out: Map<string, boolean>): void {
 /** Read `len` bytes at `off`; null unless the whole range was there. */
 function readAt(fd: number, off: number, len: number): Buffer | null {
   if (len <= 0) return null;
-  const buf = Buffer.allocUnsafe(len);
   try {
+    const buf = Buffer.allocUnsafe(len);
     return readSync(fd, buf, 0, len, off) === len ? buf : null;
   } catch {
     return null;
