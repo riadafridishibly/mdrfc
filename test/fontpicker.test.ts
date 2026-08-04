@@ -60,6 +60,15 @@ async function type(value: string) {
   await Promise.resolve();
 }
 
+function key(name: string) {
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true }));
+}
+
+async function enter() {
+  key("Enter");
+  await Promise.resolve();
+}
+
 beforeEach(async () => {
   GlobalRegistrator.register();
   globalThis.fetch = (async () => new Response(JSON.stringify(FONTS))) as typeof fetch;
@@ -123,36 +132,70 @@ describe("font picker", () => {
     expect(input.placeholder).toBe("SF Mono (system default)");
   });
 
-  test("the default is not claimed once a font is chosen", async () => {
+  test("typing searches without changing the font", async () => {
     await type("Monaco");
-    expect(input.value).toBe("Monaco");
-    expect(document.body.style.fontFamily).toContain("Monaco");
+    expect(rows()).toEqual(["Monaco"]);
+    expect(document.body.style.fontFamily).toBe("");
+    expect(localStorage.getItem("mdrfc.font")).toBeNull();
   });
 
-  test("a family that is not installed still applies as typed", async () => {
+  test("a family that is not installed still applies, on Enter", async () => {
     await type("Comic Sans MS");
+    expect(list.querySelector(".font-empty")).not.toBeNull();
+    expect(document.body.style.fontFamily).toBe(""); // still only a search
+    await enter();
     expect(document.body.style.fontFamily).toContain("Comic Sans MS");
     expect(localStorage.getItem("mdrfc.font")).toBe("Comic Sans MS");
-    expect(list.querySelector(".font-empty")).not.toBeNull();
+  });
+
+  test("Enter with no highlighted row commits the query", async () => {
+    await type("mon");
+    expect(list.querySelector("li.active")).toBeNull();
+    await enter();
+    expect(input.value).toBe("mon");
+    expect(localStorage.getItem("mdrfc.font")).toBe("mon");
+  });
+
+  test("an emptied field on Enter returns to the system default", async () => {
+    await type("Monaco");
+    await enter();
+    await type("");
+    await enter();
+    expect(document.body.style.fontFamily).toBe("");
+    expect(localStorage.getItem("mdrfc.font")).toBeNull();
+  });
+
+  test("abandoning a search restores the family in force", async () => {
+    await type("Monaco");
+    await enter();
+    await type("Zapf");
+    key("Escape");
+    expect(input.value).toBe("Monaco");
+    expect(document.body.style.fontFamily.startsWith("Monaco")).toBe(true);
+  });
+
+  test("clicking away abandons the search too", async () => {
+    await type("Monaco");
+    await enter();
+    await type("Zapf");
+    document.body.dispatchEvent(new Event("click", { bubbles: true }));
+    expect(input.value).toBe("Monaco");
+    expect(list.childElementCount).toBe(0);
   });
 
   test("arrow keys move the active row and Enter picks it", async () => {
     await type("mon");
-    for (const key of ["ArrowDown", "ArrowDown"]) {
-      input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
-    }
+    key("ArrowDown");
+    key("ArrowDown");
     expect(list.querySelector("li.active .sample")!.textContent).toBe("SF Mono");
-    input.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
-    );
+    await enter();
     expect(input.value).toBe("SF Mono");
+    expect(localStorage.getItem("mdrfc.font")).toBe("SF Mono");
   });
 
   test("Escape closes the list but leaves the panel open", async () => {
     await type("mon");
-    input.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
-    );
+    key("Escape");
     expect(list.childElementCount).toBe(0);
     expect(document.getElementById("mdrfc-panel")!.classList.contains("open")).toBe(true);
   });

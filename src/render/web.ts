@@ -729,15 +729,14 @@ ${reloadScript}
   themeSel.addEventListener("change", function(){
     setTheme(themeSel.value); wr("theme", themeSel.value);
   });
-  fontInput.addEventListener("input", function(){
-    var v = fontInput.value.trim();
-    applyFont(v); wr("font", v);
-    renderFonts(v);
-  });
+  // Typing only filters the list. The font changes when a family is chosen —
+  // a row clicked, or Enter pressed — so a half-typed query never becomes the
+  // page font and never reaches localStorage.
+  fontInput.addEventListener("input", function(){ renderFonts(fontInput.value.trim()); });
   fontInput.addEventListener("focus", function(){ renderFonts(fontInput.value.trim()); });
   fontInput.addEventListener("keydown", onFontKey);
   document.addEventListener("click", function(e){
-    if(!fontInput.contains(e.target) && !fontList.contains(e.target)) hideFonts();
+    if(!fontInput.contains(e.target) && !fontList.contains(e.target)) cancelFontSearch();
   });
   function onSize(){
     var v = sizeRange.value;
@@ -877,7 +876,14 @@ ${reloadScript}
 
   function pickFont(name){
     fontInput.value = name;
-    applyFont(name); wr("font", name);
+    applyFont(name);
+    if(name) wr("font", name); else rm("font");
+    hideFonts();
+  }
+
+  /** Abandon the search: drop the query and show the family in force. */
+  function cancelFontSearch(){
+    fontInput.value = rd("font", "");
     hideFonts();
   }
 
@@ -894,12 +900,14 @@ ${reloadScript}
       e.preventDefault();
       var next = active + (e.key === "ArrowDown" ? 1 : -1);
       setActive((next + shown.length) % shown.length);
-    } else if(e.key === "Enter" && open && active >= 0){
+    } else if(e.key === "Enter"){
       e.preventDefault();
-      pickFont(shown[active].name);
-    } else if(e.key === "Escape" && open){
-      e.stopPropagation();               // close the list, keep the panel open
-      hideFonts();
+      // A highlighted row wins; otherwise commit the text as typed, which is
+      // how a family the machine has no record of still gets applied.
+      pickFont(open && active >= 0 ? shown[active].name : fontInput.value.trim());
+    } else if(e.key === "Escape"){
+      e.stopPropagation();               // leave the search, keep the panel open
+      cancelFontSearch();
     }
   }
 })();

@@ -154,8 +154,13 @@ persisted in `localStorage`.
 The font field searches every family installed on the machine — fixed-pitch
 ones are tagged `mono` and sort first, since proportional text breaks the
 72-column alignment, but nothing is hidden. Each row previews itself in its
-own family. A name that is not installed still applies as typed, so a webfont
-you have loaded some other way works too.
+own family, and an empty field names the one it falls back to.
+
+Typing only searches. The font changes when a family is **chosen** — click a
+row, or press **Enter**. Enter with no row highlighted takes the field as
+typed, so a webfont you have loaded some other way works too; Enter on an
+empty field returns to the system default. **Esc** or a click elsewhere
+abandons the search and restores the family in force.
 
 Families are collected from `fc-list` when fontconfig is present, plus a
 direct scan of the OS font directories that reads only each font's `name` and
