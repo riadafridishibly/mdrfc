@@ -45,6 +45,35 @@ function localHeadings(query) {
   return out.slice(0, 40);
 }
 
+/**
+ * Reorder hits so every hit from one file sits together, files kept in
+ * best-hit order and lines in document order within a file. Lets the list
+ * state each path once as a header instead of repeating it on every row.
+ */
+function groupByFile(hits) {
+  const order = [];
+  const byPath = new Map();
+  for (const h of hits) {
+    let bucket = byPath.get(h.path);
+    if (!bucket) {
+      bucket = [];
+      byPath.set(h.path, bucket);
+      order.push(h.path);
+    }
+    bucket.push(h);
+  }
+  return order.flatMap((p) => byPath.get(p).sort((a, b) => a.line - b.line));
+}
+
+/** Files stay flat (the path is the result); headings and content group by file. */
+function arrange(hits) {
+  return [
+    ...hits.filter((h) => h.kind === "file"),
+    ...groupByFile(hits.filter((h) => h.kind === "heading")),
+    ...groupByFile(hits.filter((h) => h.kind === "text")),
+  ];
+}
+
 function Highlight({ text, range, indices }) {
   if (range) {
     const [s, l] = range;
@@ -57,7 +86,20 @@ function Highlight({ text, range, indices }) {
   return html`${text}`;
 }
 
+/** Path header above a file's hits. The directory prefix truncates; the
+ *  filename is never allowed to shrink away. */
+function FileHead({ path }) {
+  const cut = path.lastIndexOf("/");
+  return html`
+    <li class="mdrfc-p-file" role="presentation">
+      ${cut === -1 ? null : html`<span class="mdrfc-p-dir">${path.slice(0, cut + 1)}</span>`}
+      <span class="mdrfc-p-base">${path.slice(cut + 1)}</span>
+    </li>
+  `;
+}
+
 function Row({ hit, active, onPick, onHover }) {
+  const filed = hit.kind === "heading" || hit.kind === "text";
   return html`
     <li
       class=${"mdrfc-p-row" + (active ? " active" : "")}
@@ -66,12 +108,10 @@ function Row({ hit, active, onPick, onHover }) {
       onMouseMove=${onHover}
       onClick=${onPick}
     >
+      ${filed ? html`<span class="mdrfc-p-line">${hit.line}</span>` : null}
       <span class="mdrfc-p-main" style=${hit.kind === "local" ? `padding-left:${(hit.depth - 1) * 10}px` : ""}>
         <${Highlight} text=${hit.text} range=${hit.range} indices=${hit.indices} />
       </span>
-      ${hit.kind !== "local" && hit.kind !== "file"
-        ? html`<span class="mdrfc-p-meta">${hit.path}:${hit.line}</span>`
-        : null}
     </li>
   `;
 }
@@ -121,7 +161,7 @@ function Palette() {
     const t = setTimeout(() => {
       fetch("/_search?q=" + encodeURIComponent(query), { signal: ctrl.signal })
         .then((r) => r.json())
-        .then((list) => setRemote(list.map((h, i) => ({ ...h, key: "r" + i }))))
+        .then((list) => setRemote(arrange(list).map((h, i) => ({ ...h, key: "r" + i }))))
         .catch(() => {});
     }, 80);
     return () => {
@@ -172,6 +212,7 @@ function Palette() {
   if (!open) return null;
 
   let lastGroup = null;
+  let lastPath = null;
   return html`
     <div class="mdrfc-p-backdrop" onClick=${close}>
       <div class="mdrfc-p-box" role="dialog" aria-modal="true" aria-label="Search" onClick=${(e) => e.stopPropagation()}>
@@ -190,9 +231,12 @@ function Palette() {
             ? html`<li class="mdrfc-p-empty">No matches</li>`
             : hits.map((hit, i) => {
                 const group = GROUP[hit.kind];
-                const header = group !== lastGroup ? ((lastGroup = group), group) : null;
+                const header = group !== lastGroup ? ((lastGroup = group), (lastPath = null), group) : null;
+                const filed = hit.kind === "heading" || hit.kind === "text";
+                const file = filed && hit.path !== lastPath ? ((lastPath = hit.path), hit.path) : null;
                 return html`
-                  ${header ? html`<li class="mdrfc-p-group">${header}</li>` : null}
+                  ${header ? html`<li class="mdrfc-p-group" role="presentation">${header}</li>` : null}
+                  ${file ? html`<${FileHead} path=${file} />` : null}
                   <${Row}
                     key=${hit.key}
                     hit=${hit}

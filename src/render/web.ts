@@ -572,7 +572,18 @@ function htmlTemplate(
   .mdrfc-p-row.active { background: var(--code-bg); }
   .mdrfc-p-row.active .mdrfc-p-main { color: var(--link); }
   .mdrfc-p-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mdrfc-p-meta { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+  /* Path header over a file's hits. The directory prefix absorbs the
+     truncation so the filename — and the snippet below it — stay whole. */
+  .mdrfc-p-file {
+    display: flex; align-items: baseline;
+    padding: 8px 15px 2px; font-size: 11px; color: var(--muted);
+  }
+  .mdrfc-p-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mdrfc-p-base { flex-shrink: 0; color: var(--fg); opacity: .8; }
+  .mdrfc-p-line {
+    flex: 0 0 auto; min-width: 2.5em; text-align: right;
+    color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
+  }
   .mdrfc-p-row mark { background: transparent; color: var(--link); font-weight: 700; }
   .mdrfc-p-row.active mark { text-decoration: underline; }
   .mdrfc-p-empty { padding: 14px 15px; color: var(--muted); font-size: 13px; }
