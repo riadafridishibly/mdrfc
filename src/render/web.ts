@@ -597,6 +597,11 @@ function htmlTemplate(
     border-radius: 3px; padding: 0 4px; margin-right: 5px; font-size: 11px;
   }
   .mdrfc-p-hint.active { color: var(--link); }
+  .mdrfc-p-hint.error { color: #d33; }
+  html[data-theme="dark"] .mdrfc-p-hint.error { color: #ff8080; }
+  @media (prefers-color-scheme: dark) {
+    html:not([data-theme="light"]) .mdrfc-p-hint.error { color: #ff8080; }
+  }
   .mdrfc-p-foot {
     display: flex; gap: 14px; padding: 7px 15px;
     border-top: 1px solid var(--border); color: var(--muted); font-size: 11px;

@@ -130,6 +130,7 @@ function Palette() {
   const [query, setQuery] = useState("");
   const [remote, setRemote] = useState([]);
   const [extended, setExtended] = useState(false);
+  const [error, setError] = useState(null);
   const [sel, setSel] = useState(0);
   const inputRef = useRef(null);
   const listRef = useRef(null);
@@ -166,17 +167,26 @@ function Palette() {
     if (!open || !CFG.dirMode || !query.trim()) {
       setRemote([]);
       setExtended(false);
+      setError(null);
       return;
     }
     const ctrl = new AbortController();
     const t = setTimeout(() => {
       fetch("/_search?q=" + encodeURIComponent(query), { signal: ctrl.signal })
-        .then((r) => r.json())
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error("search failed: " + r.status))))
         .then((data) => {
           setRemote(arrange(data.hits).map((h, i) => ({ ...h, key: "r" + i })));
           setExtended(data.extended);
+          setError(null);
         })
-        .catch(() => {});
+        .catch((err) => {
+          // An aborted request is just a superseded keystroke, not a failure.
+          if (err && err.name === "AbortError") return;
+          setRemote([]);
+          // Reporting beats an empty list: a silent catch here turns any
+          // breakage into an indistinguishable "No matches".
+          setError(String((err && err.message) || err));
+        });
     }, 80);
     return () => {
       clearTimeout(t);
@@ -241,7 +251,7 @@ function Palette() {
           onKeyDown=${onKeyDown}
         />
         <ul class="mdrfc-p-list mdrfc-scroll" ref=${listRef} role="listbox">
-          ${hits.length === 0 && query
+          ${hits.length === 0 && query && !error
             ? html`<li class="mdrfc-p-empty">No matches</li>`
             : hits.map((hit, i) => {
                 const group = GROUP[hit.kind];
@@ -261,7 +271,9 @@ function Palette() {
                 `;
               })}
         </ul>
-        ${extended
+        ${error
+          ? html`<div class="mdrfc-p-hint error">${error}</div>`
+          : extended
           ? html`<div class="mdrfc-p-hint active">
               Matching paths only — content search is off while the query uses operators.
             </div>`

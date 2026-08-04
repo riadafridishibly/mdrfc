@@ -176,12 +176,15 @@ export async function startServer(opts: ServerOpts): Promise<void> {
       }
 
       // Command palette runtime. Served as separate modules rather than inlined
-      // so the ~13 KB bundle isn't re-sent with every in-place navigation.
+      // so the ~13 KB bundle isn't re-sent with every in-place navigation —
+      // that only refetches the document, so these are not requested again.
+      // Never cached: a viewer that live-reloads must not keep serving a stale
+      // script after the binary it came from has changed underneath it.
       if (u.pathname === "/_preact.js" || u.pathname === "/_palette.js") {
         return new Response(u.pathname === "/_preact.js" ? preactSrc : paletteSrc, {
           headers: {
             "content-type": "text/javascript; charset=utf-8",
-            "cache-control": "max-age=3600",
+            "cache-control": "no-store",
           },
         });
       }
