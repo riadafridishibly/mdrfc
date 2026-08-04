@@ -74,7 +74,7 @@ function renderFrontmatterHtml(data: Record<string, FmValue>): string {
  */
 export function renderWeb(
   md: string,
-  opts: RenderOpts & { dirMode?: boolean },
+  opts: RenderOpts & { dirMode?: boolean; source?: string },
   reloadToken?: string,
   tree?: TreeNode | null,
   currentRel?: string
@@ -91,9 +91,45 @@ export function renderWeb(
     theme,
     reloadToken,
     sidebar,
-    frontmatterTitle(fm.data),
+    documentTitle(fm.data, body, currentRel || opts.source),
     opts.dirMode === true
   );
+}
+
+/**
+ * Name the browser tab after the document: a frontmatter `title`, else the
+ * first heading, else the filename. Only a nameless document read off stdin
+ * falls through to the bare tool name.
+ */
+function documentTitle(
+  fmData: Record<string, FmValue>,
+  body: string,
+  path?: string
+): string | undefined {
+  return frontmatterTitle(fmData) ?? firstHeadingText(body) ?? fileTitle(path);
+}
+
+/** The first <h1>'s text, with markup dropped and marked's escapes undone. */
+function firstHeadingText(html: string): string | undefined {
+  const m = html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/);
+  if (!m) return undefined;
+  const text = m[1]
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#(?:39|x27);/g, "'")
+    .replace(/&amp;/g, "&") // last: an escaped ampersand must not re-decode
+    .replace(/\s+/g, " ")
+    .trim();
+  return text || undefined;
+}
+
+/** A path's filename, minus its markdown extension. */
+function fileTitle(path?: string): string | undefined {
+  if (!path) return undefined;
+  const name = (path.split(/[\\/]/).pop() ?? "").replace(/\.mdx?$/i, "").trim();
+  return name || undefined;
 }
 
 /**
