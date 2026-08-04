@@ -81,7 +81,7 @@ export function renderWeb(
 ): string {
   const marked = new Marked();
   const fm = parseFrontmatter(md);
-  const body = addHeadingIds(marked.parse(fm.content) as string);
+  const body = addCodeBlockTools(addHeadingIds(marked.parse(fm.content) as string));
   const meta = opts.frontmatter ? renderFrontmatterHtml(fm.data) : "";
   const theme = opts.theme;
   const sidebar = tree ? renderSidebar(tree, currentRel ?? "") : "";
@@ -114,6 +114,25 @@ function addHeadingIds(html: string): string {
       const id = uniqueSlug(slugifyHeading(inner));
       return `<h${level} id="${id}">${inner}</h${level}>`;
     }
+  );
+}
+
+/**
+ * Wrap every code block in a positioned container carrying a top-right toolbar:
+ * a line-wrap toggle and a copy button. The toolbar sits outside the <pre> so
+ * it stays put while the block scrolls horizontally; clicks are handled by a
+ * delegated listener, which also covers blocks that arrive via in-place nav.
+ */
+function addCodeBlockTools(html: string): string {
+  const btn = (act: string, label: string, extra = "") =>
+    `<button type="button" class="mdrfc-code-btn" data-act="${act}" title="${label}" aria-label="${label}"${extra}>${act}</button>`;
+  return html.replace(
+    /<pre(\s[^>]*)?>([\s\S]*?)<\/pre>/g,
+    (_m, attrs: string | undefined, inner: string) =>
+      `<div class="mdrfc-code"><div class="mdrfc-code-tools">` +
+      btn("wrap", "Toggle line wrapping", ' aria-pressed="false"') +
+      btn("copy", "Copy code") +
+      `</div><pre${attrs ?? ""}>${inner}</pre></div>`
   );
 }
 
@@ -397,6 +416,27 @@ function htmlTemplate(
     line-height: 1.4;
   }
   pre code { background: none; padding: 0; }
+
+  /* ── code block toolbar (wrap / copy) ───────────────────────── */
+  .mdrfc-code { position: relative; }
+  .mdrfc-code pre { margin: 1em 0; }
+  .mdrfc-code-tools {
+    position: absolute; top: 6px; right: 6px;
+    display: flex; gap: 4px;
+    opacity: 0; transition: opacity .12s;
+  }
+  .mdrfc-code:hover .mdrfc-code-tools,
+  .mdrfc-code-tools:focus-within { opacity: 1; }
+  @media (hover: none) { .mdrfc-code-tools { opacity: .65; } }
+  .mdrfc-code-btn {
+    font-family: inherit; font-size: 11px; line-height: 1;
+    padding: 4px 6px; border-radius: 4px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--muted);
+    cursor: pointer;
+  }
+  .mdrfc-code-btn:hover { color: var(--fg); }
+  .mdrfc-code-btn[aria-pressed="true"] { color: var(--link); border-color: var(--link); }
+  .mdrfc-code.wrap pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   table { border-collapse: collapse; margin: 1em 0; font-size: 0.92em; }
   th, td { border: 1px solid var(--border); padding: 0.4em 0.7em; text-align: left; }
   th { background: var(--code-bg); }
@@ -909,6 +949,56 @@ ${reloadScript}
       e.stopPropagation();               // leave the search, keep the panel open
       cancelFontSearch();
     }
+  }
+})();
+</script>
+<script>
+(function(){
+  // Delegated so blocks swapped in by in-place navigation keep working.
+  document.addEventListener("click", function(e){
+    var btn = e.target.closest && e.target.closest(".mdrfc-code-btn");
+    if(!btn) return;
+    var box = btn.closest(".mdrfc-code");
+    if(!box) return;
+    if(btn.dataset.act === "wrap"){
+      var on = box.classList.toggle("wrap");
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      return;
+    }
+    var code = box.querySelector("pre");
+    copy(code ? code.textContent : "", btn);
+  });
+
+  function copy(text, btn){
+    write(text).then(function(){ flash(btn, "copied"); })
+               .catch(function(){ flash(btn, "failed"); });
+  }
+
+  // navigator.clipboard is absent on plain-http origins other than localhost,
+  // which is exactly how this server gets reached over a LAN.
+  function write(text){
+    if(navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    return new Promise(function(resolve, reject){
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.cssText = "position:fixed;top:0;left:-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch(err){}
+      document.body.removeChild(ta);
+      ok ? resolve() : reject();
+    });
+  }
+
+  function flash(btn, msg){
+    if(btn.dataset.busy) clearTimeout(Number(btn.dataset.busy));
+    btn.textContent = msg;
+    btn.dataset.busy = String(setTimeout(function(){
+      btn.textContent = "copy";
+      delete btn.dataset.busy;
+    }, 1200));
   }
 })();
 </script>
