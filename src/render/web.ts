@@ -23,7 +23,11 @@ function esc(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/** Render the filetree (directory mode) as a collapsible sidebar nav. */
+/**
+ * Render the filetree (directory mode) as a collapsible, resizable sidebar nav,
+ * plus its toggle button and drag-to-resize handle.
+ * Folders carry `data-path` so their open/closed state can be persisted.
+ */
 function renderSidebar(tree: TreeNode, currentRel: string): string {
   const renderNodes = (nodes: TreeNode[]): string => {
     if (!nodes.length) return "";
@@ -32,7 +36,7 @@ function renderSidebar(tree: TreeNode, currentRel: string): string {
       if (n.dir) {
         // Folder with at least one .md descendant → render, open by default.
         const inner = renderNodes(n.children);
-        html += `<li><details open><summary>${esc(n.name)}/</summary>${inner}</details></li>`;
+        html += `<li><details open data-path="${esc(n.path)}"><summary>${esc(n.name)}/</summary>${inner}</details></li>`;
       } else {
         const active = n.path === currentRel ? ` class="active" aria-current="page"` : "";
         const href = "/" + encodeURI(n.path).replace(/#/g, "%23");
@@ -43,7 +47,9 @@ function renderSidebar(tree: TreeNode, currentRel: string): string {
   };
   const inner = renderNodes(tree.children);
   if (!inner) return "";
-  return `<aside class="mdrfc-sidebar" aria-label="Files"><div class="mdrfc-tree">${inner}</div></aside>`;
+  return `<button id="mdrfc-sidebar-toggle" class="mdrfc-iconbtn" type="button" title="Toggle file list (Ctrl-B)" aria-label="Toggle file list" aria-expanded="true" aria-controls="mdrfc-sidebar">&#9776;</button>
+<aside id="mdrfc-sidebar" class="mdrfc-sidebar mdrfc-scroll" aria-label="Files"><div class="mdrfc-tree">${inner}</div></aside>
+<div id="mdrfc-resizer" class="mdrfc-resizer" role="separator" aria-orientation="vertical" aria-label="Resize file list" title="Drag to resize · double-click to reset"></div>`;
 }
 
 /** Render frontmatter as a definition-list metadata block above the document. */
@@ -151,6 +157,161 @@ function htmlTemplate(
   const htmlThemeAttr =
     theme === "light" || theme === "dark" ? ` data-theme="${theme}"` : "";
 
+  // Runs before first paint so the sidebar never flashes at the wrong
+  // width or slides in from collapsed on every navigation.
+  const sidebarBootScript = sidebar
+    ? `<script>
+(function(){
+  try {
+    var root = document.documentElement;
+    var w = localStorage.getItem("mdrfc.sidebarW");
+    if(w) root.style.setProperty("--sidebar-w", parseInt(w,10)+"px");
+    var collapsed = localStorage.getItem("mdrfc.sidebarCollapsed") === "1";
+    // narrow screens start collapsed regardless of the desktop preference
+    if(window.matchMedia("(max-width: 720px)").matches) collapsed = true;
+    if(collapsed) root.classList.add("mdrfc-sidebar-collapsed");
+  } catch(e){}
+})();
+</script>`
+    : "";
+
+  // Sidebar behaviour: collapse, drag-resize, and persisted tree state.
+  // Navigation swaps <main> in place instead of reloading, so the tree's
+  // scroll position and folder open/closed state survive a click.
+  const sidebarScript = sidebar
+    ? `<script>
+(function(){
+  var aside = document.getElementById("mdrfc-sidebar");
+  var resizer = document.getElementById("mdrfc-resizer");
+  var toggle = document.getElementById("mdrfc-sidebar-toggle");
+  var main = document.querySelector("main");
+  if(!aside || !resizer || !toggle || !main) return;
+  var root = document.documentElement;
+  var K = "mdrfc.";
+  function rd(k, d){ try{ var v = localStorage.getItem(K+k); return v==null?d:v; }catch(e){ return d; } }
+  function wr(k, v){ try{ localStorage.setItem(K+k, v); }catch(e){} }
+  function isNarrow(){ return window.matchMedia("(max-width: 720px)").matches; }
+
+  // ── collapse ────────────────────────────────────────────────
+  function collapsed(){ return root.classList.contains("mdrfc-sidebar-collapsed"); }
+  function setCollapsed(v, persist){
+    root.classList.toggle("mdrfc-sidebar-collapsed", v);
+    toggle.setAttribute("aria-expanded", v ? "false" : "true");
+    if(persist) wr("sidebarCollapsed", v ? "1" : "0");
+  }
+  setCollapsed(collapsed(), false);
+  toggle.addEventListener("click", function(){ setCollapsed(!collapsed(), !isNarrow()); });
+  document.addEventListener("keydown", function(e){
+    if((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "b" || e.key === "B")){
+      e.preventDefault();
+      setCollapsed(!collapsed(), !isNarrow());
+    }
+  });
+
+  // ── drag to resize ──────────────────────────────────────────
+  var MIN = 160, MAX = 560, DEFAULT_W = 248;
+  var width = parseInt(rd("sidebarW", String(DEFAULT_W)), 10) || DEFAULT_W;
+  var dragging = false;
+  function setWidth(px, persist){
+    width = Math.min(MAX, Math.max(MIN, Math.round(px)));
+    root.style.setProperty("--sidebar-w", width + "px");
+    if(persist) wr("sidebarW", String(width));
+  }
+  resizer.addEventListener("pointerdown", function(e){
+    if(e.button !== 0) return;
+    dragging = true;
+    resizer.classList.add("dragging");
+    document.body.classList.add("mdrfc-resizing");
+    resizer.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  resizer.addEventListener("pointermove", function(e){
+    if(dragging) setWidth(e.clientX, false);
+  });
+  function endDrag(){
+    if(!dragging) return;
+    dragging = false;
+    resizer.classList.remove("dragging");
+    document.body.classList.remove("mdrfc-resizing");
+    wr("sidebarW", String(width));
+  }
+  resizer.addEventListener("pointerup", endDrag);
+  resizer.addEventListener("pointercancel", endDrag);
+  resizer.addEventListener("dblclick", function(){ setWidth(DEFAULT_W, true); });
+
+  // ── folder open/closed state, keyed by folder path ──────────
+  var closed;
+  try { closed = new Set(JSON.parse(rd("treeClosed", "[]"))); }
+  catch(e){ closed = new Set(); }
+  Array.prototype.forEach.call(aside.querySelectorAll("details[data-path]"), function(d){
+    d.open = !closed.has(d.getAttribute("data-path"));
+  });
+  // 'toggle' doesn't bubble, so listen in the capture phase
+  aside.addEventListener("toggle", function(e){
+    var d = e.target;
+    if(!d || d.tagName !== "DETAILS") return;
+    var p = d.getAttribute("data-path");
+    if(!p) return;
+    if(d.open) closed.delete(p); else closed.add(p);
+    wr("treeClosed", JSON.stringify(Array.from(closed)));
+  }, true);
+
+  // ── scroll position (survives a hard reload too) ────────────
+  var SCROLL = K + "treeScroll";
+  try {
+    var saved = sessionStorage.getItem(SCROLL);
+    if(saved) aside.scrollTop = parseInt(saved, 10) || 0;
+  } catch(e){}
+  var pending = 0;
+  aside.addEventListener("scroll", function(){
+    if(pending) return;
+    pending = requestAnimationFrame(function(){
+      pending = 0;
+      try { sessionStorage.setItem(SCROLL, String(aside.scrollTop)); } catch(e){}
+    });
+  }, { passive: true });
+
+  // ── in-place navigation ─────────────────────────────────────
+  function swap(html, url){
+    var doc = new DOMParser().parseFromString(html, "text/html");
+    var next = doc.querySelector("main");
+    if(!next){ location.href = url; return; }
+    main.innerHTML = next.innerHTML;
+    if(doc.title) document.title = doc.title;
+    var path = new URL(url, location.href).pathname;
+    Array.prototype.forEach.call(aside.querySelectorAll("a"), function(a){
+      var on = a.pathname === path;
+      a.classList.toggle("active", on);
+      if(on) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
+    });
+    window.scrollTo(0, 0);
+  }
+  aside.addEventListener("click", function(e){
+    var a = e.target.closest && e.target.closest("a");
+    if(!a || !aside.contains(a)) return;
+    if(e.defaultPrevented || e.button !== 0) return;
+    if(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if(a.target && a.target !== "_self") return;
+    if(a.origin !== location.origin) return;
+    e.preventDefault();
+    var url = a.href;
+    fetch(url).then(function(r){ return r.text(); }).then(function(html){
+      history.pushState({ mdrfc: 1 }, "", url);
+      swap(html, url);
+      if(isNarrow()) setCollapsed(true, false);
+    }).catch(function(){ location.href = url; });
+  });
+  window.addEventListener("popstate", function(){
+    fetch(location.href)
+      .then(function(r){ return r.text(); })
+      .then(function(html){ swap(html, location.href); })
+      .catch(function(){ location.reload(); });
+  });
+})();
+</script>`
+    : "";
+
   return `<!doctype html>
 <html lang="en"${htmlThemeAttr}>
 <head>
@@ -160,18 +321,23 @@ function htmlTemplate(
 <style>
   :root {
     --font-size: 14px;
+    --sidebar-w: 248px;
     --bg: #ffffff;
     --fg: #1a1a1a;
     --muted: #666666;
     --border: #d0d0d0;
     --code-bg: #f4f4f4;
     --link: #2563eb;
+    --scroll-thumb: rgba(0,0,0,.22);
+    --scroll-thumb-hover: rgba(0,0,0,.38);
   }
   html[data-theme="light"] { color-scheme: light; }
   html[data-theme="dark"] {
     color-scheme: dark;
     --bg: #1a1a1a; --fg: #e0e0e0; --muted: #999; --border: #444;
     --code-bg: #2a2a2a; --link: #6cb6ff;
+    --scroll-thumb: rgba(255,255,255,.20);
+    --scroll-thumb-hover: rgba(255,255,255,.34);
   }
   /* auto: follow OS, unless user forced light */
   @media (prefers-color-scheme: dark) {
@@ -179,6 +345,8 @@ function htmlTemplate(
       color-scheme: dark;
       --bg: #1a1a1a; --fg: #e0e0e0; --muted: #999; --border: #444;
       --code-bg: #2a2a2a; --link: #6cb6ff;
+      --scroll-thumb: rgba(255,255,255,.20);
+      --scroll-thumb-hover: rgba(255,255,255,.34);
     }
   }
   body {
@@ -250,13 +418,50 @@ function htmlTemplate(
   /* ── filetree sidebar (directory mode) ──────────────────────── */
   .mdrfc-sidebar {
     position: fixed; top: 0; left: 0; bottom: 0;
-    width: 248px; overflow-y: auto;
+    width: var(--sidebar-w); overflow-y: auto; overflow-x: hidden;
     background: var(--bg); border-right: 1px solid var(--border);
-    padding: 14px 6px 14px 12px; box-sizing: border-box;
+    padding: 52px 4px 14px 12px; box-sizing: border-box;
     font-size: 13px; line-height: 1.5;
     z-index: 40;
+    transition: transform .15s ease;
   }
-  body.mdrfc-has-sidebar { padding-left: 248px; }
+
+  /* Slim overlay-style scrollbars for the app chrome: the gutter is always
+     reserved so nothing reflows, but the thumb only appears on hover. */
+  .mdrfc-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+    scrollbar-gutter: stable;
+  }
+  .mdrfc-scroll:hover, .mdrfc-scroll:focus-within {
+    scrollbar-color: var(--scroll-thumb) transparent;
+  }
+  .mdrfc-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+  .mdrfc-scroll::-webkit-scrollbar-track { background: transparent; }
+  .mdrfc-scroll::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+    transition: background-color .15s;
+  }
+  .mdrfc-scroll:hover::-webkit-scrollbar-thumb { background-color: var(--scroll-thumb); }
+  .mdrfc-scroll::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-thumb-hover); }
+  .mdrfc-scroll::-webkit-scrollbar-corner { background: transparent; }
+  body.mdrfc-has-sidebar { padding-left: var(--sidebar-w); }
+  html.mdrfc-sidebar-collapsed .mdrfc-sidebar { transform: translateX(-100%); }
+  html.mdrfc-sidebar-collapsed body.mdrfc-has-sidebar { padding-left: 1rem; }
+
+  /* drag handle: sits on the sidebar's right edge, hidden when collapsed */
+  .mdrfc-resizer {
+    position: fixed; top: 0; bottom: 0; left: calc(var(--sidebar-w) - 3px);
+    width: 6px; z-index: 45; cursor: col-resize;
+    background: transparent; transition: background .12s;
+  }
+  .mdrfc-resizer:hover, .mdrfc-resizer.dragging { background: var(--link); }
+  html.mdrfc-sidebar-collapsed .mdrfc-resizer { display: none; }
+  body.mdrfc-resizing { user-select: none; cursor: col-resize; }
+
   .mdrfc-tree ul { list-style: none; margin: 0; padding: 0; }
   .mdrfc-tree li { margin: 0; }
   .mdrfc-tree summary {
@@ -277,21 +482,25 @@ function htmlTemplate(
   }
   .mdrfc-tree a:hover { background: var(--code-bg); }
   .mdrfc-tree a.active { color: var(--link); font-weight: 600; }
+  /* narrow screens: sidebar overlays the content instead of reserving space */
   @media (max-width: 720px) {
-    .mdrfc-sidebar { display: none; }
+    .mdrfc-sidebar { width: min(280px, 85vw); box-shadow: 2px 0 14px rgba(0,0,0,.25); }
     body.mdrfc-has-sidebar { padding-left: 1rem; }
+    .mdrfc-resizer { display: none; }
   }
 
-  /* ── settings panel ─────────────────────────────────────────── */
-  #mdrfc-gear {
-    position: fixed; top: 12px; right: 12px; z-index: 50;
+  /* ── floating icon buttons (sidebar toggle, settings gear) ──── */
+  .mdrfc-iconbtn {
+    position: fixed; top: 12px; z-index: 50;
     width: 34px; height: 34px; border-radius: 6px;
     border: 1px solid var(--border); background: var(--code-bg); color: var(--fg);
     cursor: pointer; font-size: 16px; line-height: 1;
     display: flex; align-items: center; justify-content: center;
     opacity: .55; transition: opacity .15s;
   }
-  #mdrfc-gear:hover { opacity: 1; }
+  .mdrfc-iconbtn:hover { opacity: 1; }
+  #mdrfc-gear { right: 12px; }
+  #mdrfc-sidebar-toggle { left: 12px; }
   #mdrfc-panel {
     position: fixed; top: 0; right: 0; height: 100vh; width: 280px;
     background: var(--bg); border-left: 1px solid var(--border);
@@ -324,14 +533,15 @@ function htmlTemplate(
     cursor: pointer; font-family: inherit; font-size: 13px;
   }
 </style>
+${sidebarBootScript}
 </head>
 <body${sidebar ? ' class="mdrfc-has-sidebar"' : ""}>
 ${sidebar}<main>
 ${body}
 </main>
 
-<button id="mdrfc-gear" type="button" title="Settings" aria-label="Settings">&#9881;</button>
-<div id="mdrfc-panel" role="dialog" aria-label="Settings" aria-hidden="true">
+<button id="mdrfc-gear" class="mdrfc-iconbtn" type="button" title="Settings" aria-label="Settings">&#9881;</button>
+<div id="mdrfc-panel" class="mdrfc-scroll" role="dialog" aria-label="Settings" aria-hidden="true">
   <button type="button" class="close" id="mdrfc-close" aria-label="Close">&times;</button>
   <h2>Settings</h2>
   <div class="row">
@@ -482,6 +692,7 @@ ${reloadScript}
   }
 })();
 </script>
+${sidebarScript}
 </body>
 </html>`;
 }
