@@ -785,8 +785,28 @@ ${reloadScript}
       var mono = 0;
       fonts.forEach(function(f){ if(f.mono) mono++; });
       fontCount.textContent = fonts.length ? "(" + mono + " mono of " + fonts.length + ")" : "";
+      showDefaultFont();
       if(document.activeElement === fontInput) renderFonts(fontInput.value.trim());
     }).catch(function(){ /* fonts endpoint unavailable; typing a family still works */ });
+  }
+
+  // An empty field falls through to the stylesheet's stack, so name the family
+  // it lands on. Read the stack off the body rather than repeating it here —
+  // the inline style is only set when a font is chosen, i.e. never when empty.
+  var GENERIC = /^(ui-)?(monospace|serif|sans-serif|rounded)$|^(system-ui|cursive|fantasy|emoji|math|fangsong)$/;
+  function showDefaultFont(){
+    if(fontInput.value || !fonts.length) return;
+    var stack = getComputedStyle(document.body).fontFamily.split(",");
+    for(var i = 0; i < stack.length; i++){
+      var fam = stack[i].trim().replace(/^["']|["']$/g, "");
+      if(GENERIC.test(fam)) continue;
+      for(var k = 0; k < fonts.length; k++){
+        if(fonts[k].name === fam){
+          fontInput.placeholder = fam + " (system default)";
+          return;
+        }
+      }
+    }
   }
 
   // Rank: exact > prefix > word start > substring > subsequence. Monospace

@@ -32,6 +32,13 @@ function panelScript(): string {
   return src;
 }
 
+/** The page's stylesheet, so the default font stack under test is the real one. */
+function pageStyle(): string {
+  const m = /<style>[\s\S]*?<\/style>/.exec(PAGE);
+  if (!m) throw new Error("stylesheet not found in rendered page");
+  return m[0];
+}
+
 /** The gear button and the settings panel, i.e. everything the script binds to. */
 function panelMarkup(): string {
   const start = PAGE.indexOf('<button id="mdrfc-gear"');
@@ -56,7 +63,7 @@ async function type(value: string) {
 beforeEach(async () => {
   GlobalRegistrator.register();
   globalThis.fetch = (async () => new Response(JSON.stringify(FONTS))) as typeof fetch;
-  document.body.innerHTML = panelMarkup();
+  document.body.innerHTML = pageStyle() + panelMarkup();
   new Function(panelScript())();
 
   document.getElementById("mdrfc-gear")!.dispatchEvent(new Event("click", { bubbles: true }));
@@ -106,6 +113,20 @@ describe("font picker", () => {
     expect(localStorage.getItem("mdrfc.font")).toBe("Monaco");
     expect(document.body.style.fontFamily.startsWith("Monaco")).toBe(true);
     expect(list.childElementCount).toBe(0); // list closes after a pick
+  });
+
+  test("names the family an empty field falls back to", () => {
+    // Stack is ui-monospace, SFMono-Regular, "SF Mono", … — the generic is
+    // skipped and SFMono-Regular is a PostScript name no family list reports,
+    // so the first entry actually installed is SF Mono.
+    expect(input.value).toBe("");
+    expect(input.placeholder).toBe("SF Mono (system default)");
+  });
+
+  test("the default is not claimed once a font is chosen", async () => {
+    await type("Monaco");
+    expect(input.value).toBe("Monaco");
+    expect(document.body.style.fontFamily).toContain("Monaco");
   });
 
   test("a family that is not installed still applies as typed", async () => {
