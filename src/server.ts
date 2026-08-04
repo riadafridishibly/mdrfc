@@ -1,6 +1,12 @@
-import { watch, readFileSync } from "node:fs";
-import { dirname, resolve as pathResolve, relative as pathRelative, sep } from "node:path";
-import { renderWeb } from "./render/web.ts";
+import { watch, readFileSync, readdirSync } from "node:fs";
+import {
+  dirname,
+  basename,
+  resolve as pathResolve,
+  relative as pathRelative,
+  sep,
+} from "node:path";
+import { renderWeb, type TreeNode } from "./render/web.ts";
 import { findFreePort } from "./util.ts";
 import { openBrowser } from "./open.ts";
 import { listSystemFonts } from "./fonts.ts";
@@ -9,8 +15,71 @@ import type { RenderOpts } from "./util.ts";
 export interface ServerOpts extends RenderOpts {
   content: string;
   source?: string; // file path (for live-reload watch). undefined = stdin
+  baseDir?: string; // explicit base directory (directory mode). defaults to dirname(source)
+  dirMode?: boolean; // serving a directory tree of markdown files
   port: number;
   open: boolean;
+}
+
+/** Directories skipped when scanning for markdown files. */
+const SKIP_DIRS = new Set(["node_modules", ".git", ".hg", ".svn", "dist", "build"]);
+
+/**
+ * Build a tree of every `.md` file under `base`, sorted dirs-first then alpha.
+ * Hidden files/dirs and noisy dependency/VCS dirs are excluded.
+ * Empty directories (no .md descendants) are pruned.
+ */
+export function buildMdTree(base: string): TreeNode {
+  const root: TreeNode = { name: basename(base) || base, path: "", dir: true, children: [] };
+  const walk = (absDir: string, node: TreeNode): void => {
+    let entries;
+    try {
+      entries = readdirSync(absDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    entries.sort((a, b) => {
+      const ad = a.isDirectory();
+      const bd = b.isDirectory();
+      if (ad !== bd) return ad ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    for (const e of entries) {
+      if (e.name.startsWith(".")) continue;
+      const abs = pathResolve(absDir, e.name);
+      const rel = pathRelative(base, abs);
+      if (e.isDirectory()) {
+        if (SKIP_DIRS.has(e.name)) continue;
+        const child: TreeNode = { name: e.name, path: rel, dir: true, children: [] };
+        walk(abs, child);
+        if (child.children.length) node.children.push(child);
+      } else if (e.name.toLowerCase().endsWith(".md")) {
+        node.children.push({ name: e.name, path: rel, dir: false });
+      }
+    }
+  };
+  walk(base, root);
+  return root;
+}
+
+/** Render the md tree as plain indented text (terminal directory mode). */
+export function listMdTreeText(base: string): string {
+  const tree = buildMdTree(base);
+  const lines: string[] = [];
+  const render = (nodes: TreeNode[], prefix: string, isLast: boolean[]): void => {
+    nodes.forEach((n, i) => {
+      const last = i === nodes.length - 1;
+      const branch = prefix + (last ? "└── " : "├── ");
+      lines.push(branch + n.name);
+      if (n.dir) {
+        const nextPrefix = prefix + (last ? "    " : "│   ");
+        render(n.children, nextPrefix, [...isLast, last]);
+      }
+    });
+  };
+  lines.push(tree.name + "/");
+  render(tree.children, "", []);
+  return lines.join("\n");
 }
 
 /**
@@ -25,8 +94,13 @@ export async function startServer(opts: ServerOpts): Promise<void> {
   const sockets = new Set<WebSocket>();
 
   // Base directory used to resolve internal (relative) markdown links.
-  // Only set when a source file was provided (stdin has no filesystem ctx).
-  const baseDir = opts.source ? pathResolve(dirname(opts.source)) : null;
+  // Explicit baseDir wins (directory mode); otherwise derive from source file.
+  // null = stdin (no filesystem context).
+  const baseDir = opts.baseDir ?? (opts.source ? pathResolve(dirname(opts.source)) : null);
+
+  // Filetree (directory mode): one scan at startup. New/deleted .md files
+  // need a restart to appear, but edited content live-reloads as usual.
+  const tree = opts.dirMode && baseDir ? buildMdTree(baseDir) : null;
 
   // Live reload: watch source file, re-render, ping clients.
   if (opts.source) {
@@ -66,9 +140,15 @@ export async function startServer(opts: ServerOpts): Promise<void> {
   }
 
   /** Render `md`, or return a 404 page if null/empty. */
-  function htmlResponse(md: string | null, status = 200): Response {
+  function htmlResponse(md: string | null, currentRel: string, status = 200): Response {
     const body = md ?? "# Not found\n\nNo such markdown file.\n";
-    const html = renderWeb(body, opts, opts.source ? "1" : undefined);
+    const html = renderWeb(
+      body,
+      opts,
+      opts.source ? "1" : undefined,
+      tree,
+      currentRel
+    );
     return new Response(html, {
       status,
       headers: { "content-type": "text/html; charset=utf-8" },
@@ -99,15 +179,20 @@ export async function startServer(opts: ServerOpts): Promise<void> {
       // to the source file's directory. Root path serves the source.
       const requested = resolveRequestedFile(u.pathname);
       if (requested) {
+        const currentRel = pathRelative(baseDir, requested);
         try {
           const md = readFileSync(requested, "utf8");
-          return htmlResponse(md);
+          return htmlResponse(md, currentRel);
         } catch {
-          return htmlResponse(null, 404);
+          return htmlResponse(null, currentRel, 404);
         }
       }
 
-      return htmlResponse(content);
+      // Directory mode root: highlight the chosen index file (if any).
+      const rootRel = opts.dirMode && opts.source
+        ? pathRelative(baseDir, opts.source)
+        : "";
+      return htmlResponse(content, rootRel);
     },
     websocket: {
       open(ws) {

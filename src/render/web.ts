@@ -1,25 +1,69 @@
 import { Marked } from "marked";
 import type { RenderOpts, Theme } from "../util.ts";
 
+export interface TreeNode {
+  name: string;
+  path: string; // path relative to base dir; "" for root
+  dir: boolean;
+  children: TreeNode[];
+}
+
+/** HTML-escape text node content. */
+function esc(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Render the filetree (directory mode) as a collapsible sidebar nav. */
+function renderSidebar(tree: TreeNode, currentRel: string): string {
+  const renderNodes = (nodes: TreeNode[]): string => {
+    if (!nodes.length) return "";
+    let html = "<ul>";
+    for (const n of nodes) {
+      if (n.dir) {
+        // Folder with at least one .md descendant → render, open by default.
+        const inner = renderNodes(n.children);
+        html += `<li><details open><summary>${esc(n.name)}/</summary>${inner}</details></li>`;
+      } else {
+        const active = n.path === currentRel ? ` class="active" aria-current="page"` : "";
+        const href = "/" + encodeURI(n.path).replace(/#/g, "%23");
+        html += `<li><a href="${href}"${active}>${esc(n.name)}</a></li>`;
+      }
+    }
+    return html + "</ul>";
+  };
+  const inner = renderNodes(tree.children);
+  if (!inner) return "";
+  return `<aside class="mdrfc-sidebar" aria-label="Files"><div class="mdrfc-tree">${inner}</div></aside>`;
+}
+
 /**
  * Render markdown → standalone HTML.
  * RFC-style: monospace, 72ch max content width, centered.
  * Injects a tiny WebSocket client for live-reload when `reloadToken` is set,
  * and a settings panel (theme / font / size) persisted in localStorage.
+ * `tree` (directory mode) adds a fixed sidebar listing every .md file.
  */
 export function renderWeb(
   md: string,
   opts: RenderOpts,
-  reloadToken?: string
+  reloadToken?: string,
+  tree?: TreeNode | null,
+  currentRel?: string
 ): string {
   const marked = new Marked();
   const body = addHeadingIds(marked.parse(md) as string);
   const theme = opts.theme;
+  const sidebar = tree ? renderSidebar(tree, currentRel ?? "") : "";
   return htmlTemplate(
     openExternalLinksInNewTab(body),
     opts.width,
     theme,
-    reloadToken
+    reloadToken,
+    sidebar
   );
 }
 
@@ -69,7 +113,8 @@ function htmlTemplate(
   body: string,
   width: number,
   theme: Theme,
-  reloadToken?: string
+  reloadToken?: string,
+  sidebar = ""
 ): string {
   const reloadScript = reloadToken
     ? `<script>
@@ -165,6 +210,41 @@ function htmlTemplate(
   th { background: var(--code-bg); }
   img { max-width: 100%; }
 
+  /* ── filetree sidebar (directory mode) ──────────────────────── */
+  .mdrfc-sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0;
+    width: 248px; overflow-y: auto;
+    background: var(--bg); border-right: 1px solid var(--border);
+    padding: 14px 6px 14px 12px; box-sizing: border-box;
+    font-size: 13px; line-height: 1.5;
+    z-index: 40;
+  }
+  body.mdrfc-has-sidebar { padding-left: 248px; }
+  .mdrfc-tree ul { list-style: none; margin: 0; padding: 0; }
+  .mdrfc-tree li { margin: 0; }
+  .mdrfc-tree summary {
+    cursor: pointer; user-select: none;
+    color: var(--fg); font-weight: 600; padding: 1px 2px;
+    list-style: none;
+  }
+  .mdrfc-tree summary::-webkit-details-marker { display: none; }
+  .mdrfc-tree summary::before {
+    content: "▸"; display: inline-block; width: 1em; color: var(--muted);
+    transition: transform .1s;
+  }
+  .mdrfc-tree details[open] > summary::before { transform: rotate(90deg); }
+  .mdrfc-tree details > ul { padding-left: 14px; }
+  .mdrfc-tree a {
+    display: block; color: var(--fg); text-decoration: none;
+    padding: 1px 2px; border-radius: 3px;
+  }
+  .mdrfc-tree a:hover { background: var(--code-bg); }
+  .mdrfc-tree a.active { color: var(--link); font-weight: 600; }
+  @media (max-width: 720px) {
+    .mdrfc-sidebar { display: none; }
+    body.mdrfc-has-sidebar { padding-left: 1rem; }
+  }
+
   /* ── settings panel ─────────────────────────────────────────── */
   #mdrfc-gear {
     position: fixed; top: 12px; right: 12px; z-index: 50;
@@ -208,8 +288,8 @@ function htmlTemplate(
   }
 </style>
 </head>
-<body>
-<main>
+<body${sidebar ? ' class="mdrfc-has-sidebar"' : ""}>
+${sidebar}<main>
 ${body}
 </main>
 

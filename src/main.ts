@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
-import { readFileSync } from "node:fs";
-import { renderTerminal } from "./render/term.ts";
+import { readFileSync, statSync } from "node:fs";
+import { resolve as pathResolve } from "node:path";
+import { renderTerminal, renderTerminalDirectory } from "./render/term.ts";
 import { startServer } from "./server.ts";
 import {
   pageOutput,
@@ -19,7 +20,9 @@ Simple markdown viewer — terminal + web. RFC-style monospace.
 
 USAGE
   mdrfc [file]              render file to terminal (paged via less)
+  mdrfc [dir]              render directory: filetree + index (README)
   mdrfc [file] --web        serve rendered HTML and open browser
+  mdrfc [dir] --web         serve dir with sidebar filetree of all .md
   mdrfc                     read markdown from stdin
   cat foo.md | mdrfc --web  stdin + web
 
@@ -32,6 +35,13 @@ FLAGS
       --theme <auto|light|dark>  web color scheme (default auto)
   -h, --help                show this help
   -V, --version             show version
+
+DIRECTORY MODE
+  Passing a directory instead of a file scans it for *.md files (hidden
+  files and node_modules/.git/etc. are skipped) and shows a filetree:
+    - terminal: prints the tree, then renders README.md (or index.md) below
+    - web:      fixed sidebar lists every .md; click to navigate; the root
+                path serves README.md with live-reload still active
 
 EXAMPLES
   mdrfc README.md
@@ -73,11 +83,38 @@ async function main() {
   }
 
   const source = positionals[0];
-  const content = source
-    ? readFileSync(source, "utf8")
-    : await readStdin();
+  let content: string;
+  let sourceFile: string | undefined;
+  let baseDir: string | undefined;
+  let dirMode = false;
 
-  if (!content.trim()) {
+  if (source) {
+    const st = statSync(source);
+    if (st.isDirectory()) {
+      // Directory mode: show a filetree of every .md under it.
+      dirMode = true;
+      baseDir = pathResolve(source);
+      const indexCandidates = ["README.md", "readme.md", "INDEX.md", "index.md"];
+      const index = indexCandidates
+        .map((n) => pathResolve(baseDir, n))
+        .find((p) => {
+          try {
+            return statSync(p).isFile();
+          } catch {
+            return false;
+          }
+        });
+      sourceFile = index;
+      content = index ? readFileSync(index, "utf8") : "";
+    } else {
+      sourceFile = source;
+      content = readFileSync(source, "utf8");
+    }
+  } else {
+    content = await readStdin();
+  }
+
+  if (!content.trim() && !dirMode) {
     console.error("mdrfc: no input (provide a file or pipe markdown via stdin)");
     process.exit(1);
   }
@@ -97,13 +134,17 @@ async function main() {
     const shouldOpen = values.open && !values["no-open"];
     await startServer({
       content,
-      source,
+      source: sourceFile,
+      baseDir,
+      dirMode,
       port,
       open: shouldOpen,
       ...renderOpts,
     });
   } else {
-    const out = renderTerminal(content, renderOpts);
+    const out = dirMode
+      ? renderTerminalDirectory(content, baseDir!, renderOpts)
+      : renderTerminal(content, renderOpts);
     pageOutput(out);
   }
 }

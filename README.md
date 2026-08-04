@@ -4,7 +4,9 @@ Simple markdown viewer. **Terminal + web.** RFC-style monospace, 72-column width
 
 ```
 mdrfc README.md              # render in terminal (paged via less)
+mdrfc docs/                  # directory: filetree + README
 mdrfc README.md --web        # serve HTML, open browser, live-reload on edit
+mdrfc docs/ --web            # serve dir with sidebar listing all .md files
 cat foo.md | mdrfc           # stdin works too
 ```
 
@@ -60,6 +62,21 @@ Default width is **72 columns**, the long-standing RFC line-length convention. B
 - Override per-run: `mdrfc README.md --width 80`
 - Pure plain-text RFC look (no color): `mdrfc README.md --no-color`
 
+## Directory mode
+
+Give `mdrfc` a **directory** and it scans for `*.md` files (hidden files,
+`node_modules`, `.git`, `dist`, `build` are skipped) and shows a filetree:
+
+- **Terminal** — prints the tree, then renders the directory's `README.md`
+  (or `index.md`) below a divider.
+- **Web** — a fixed sidebar lists every `.md` file grouped by folder.
+  Click any file to navigate; the active file is highlighted. The root path
+  serves `README.md`, and live-reload still fires on save.
+
+```sh
+mdrfc docs/ --web
+```
+
 ## Live reload
 
 With `--web` and a **file** (not stdin), mdrfc watches the file. On every save:
@@ -87,10 +104,10 @@ src/
   main.ts          CLI entry, flag parsing, dispatch
   util.ts          width/port helpers, stdin, less paging, ANSI strip
   open.ts          cross-platform browser open
-  server.ts        Bun.serve + WebSocket live-reload + file watcher
+  server.ts        Bun.serve + WebSocket live-reload + file watcher + md tree
   render/
-    term.ts        marked + marked-terminal renderer
-    web.ts         marked HTML + CSS template
+    term.ts        marked + marked-terminal renderer; dir-mode tree
+    web.ts         marked HTML + CSS template + sidebar filetree
 scripts/
   postbuild.mjs    ad-hoc codesign on macOS
 ```
