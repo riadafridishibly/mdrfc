@@ -1,5 +1,5 @@
 import { Marked } from "marked";
-import type { RenderOpts, Theme } from "../util.ts";
+import { slugifyHeading, type RenderOpts, type Theme } from "../util.ts";
 import {
   flattenFrontmatter,
   frontmatterTitle,
@@ -73,7 +73,7 @@ function renderFrontmatterHtml(data: Record<string, FmValue>): string {
  */
 export function renderWeb(
   md: string,
-  opts: RenderOpts,
+  opts: RenderOpts & { dirMode?: boolean },
   reloadToken?: string,
   tree?: TreeNode | null,
   currentRel?: string
@@ -90,7 +90,8 @@ export function renderWeb(
     theme,
     reloadToken,
     sidebar,
-    frontmatterTitle(fm.data)
+    frontmatterTitle(fm.data),
+    opts.dirMode === true
   );
 }
 
@@ -101,14 +102,6 @@ export function renderWeb(
  */
 function addHeadingIds(html: string): string {
   const seen = new Map<string, number>();
-  const slugify = (text: string): string =>
-    text
-      .replace(/<[^>]+>/g, "") // strip inline tags
-      .toLowerCase()
-      .replace(/[^\w\s-]/g, "") // drop punctuation
-      .trim()
-      .replace(/\s+/g, "-")
-      .replace(/-+/g, "-") || "section";
   const uniqueSlug = (slug: string): string => {
     const n = seen.get(slug) ?? 0;
     seen.set(slug, n + 1);
@@ -117,7 +110,7 @@ function addHeadingIds(html: string): string {
   return html.replace(
     /<h([1-6])>([\s\S]*?)<\/h\1>/g,
     (_m, level: string, inner: string) => {
-      const id = uniqueSlug(slugify(inner));
+      const id = uniqueSlug(slugifyHeading(inner));
       return `<h${level} id="${id}">${inner}</h${level}>`;
     }
   );
@@ -142,7 +135,8 @@ function htmlTemplate(
   theme: Theme,
   reloadToken?: string,
   sidebar = "",
-  docTitle?: string
+  docTitle?: string,
+  dirMode = false
 ): string {
   const reloadScript = reloadToken
     ? `<script>
@@ -285,8 +279,19 @@ function htmlTemplate(
       if(on) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
     });
-    window.scrollTo(0, 0);
+    var hash = new URL(url, location.href).hash;
+    var target = hash ? document.getElementById(decodeURIComponent(hash.slice(1))) : null;
+    if(target) target.scrollIntoView();
+    else window.scrollTo(0, 0);
   }
+  // exposed so the command palette can reuse in-place navigation
+  window.mdrfcNavigate = function(url){
+    fetch(url).then(function(r){ return r.text(); }).then(function(html){
+      history.pushState({ mdrfc: 1 }, "", url);
+      swap(html, url);
+      if(isNarrow()) setCollapsed(true, false);
+    }).catch(function(){ location.href = url; });
+  };
   aside.addEventListener("click", function(e){
     var a = e.target.closest && e.target.closest("a");
     if(!a || !aside.contains(a)) return;
@@ -295,12 +300,7 @@ function htmlTemplate(
     if(a.target && a.target !== "_self") return;
     if(a.origin !== location.origin) return;
     e.preventDefault();
-    var url = a.href;
-    fetch(url).then(function(r){ return r.text(); }).then(function(html){
-      history.pushState({ mdrfc: 1 }, "", url);
-      swap(html, url);
-      if(isNarrow()) setCollapsed(true, false);
-    }).catch(function(){ location.href = url; });
+    window.mdrfcNavigate(a.href);
   });
   window.addEventListener("popstate", function(){
     fetch(location.href)
@@ -540,6 +540,50 @@ function htmlTemplate(
     background: var(--code-bg); color: var(--fg); border-radius: 4px;
     cursor: pointer; font-family: inherit; font-size: 13px;
   }
+
+  /* ── command palette (Ctrl/Cmd-K) ───────────────────────────── */
+  .mdrfc-p-backdrop {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,.38);
+    display: flex; justify-content: center; align-items: flex-start;
+    padding: 10vh 1rem 1rem;
+  }
+  .mdrfc-p-box {
+    width: 100%; max-width: 640px; max-height: 70vh;
+    display: flex; flex-direction: column;
+    background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.35); overflow: hidden;
+  }
+  .mdrfc-p-input {
+    font-family: inherit; font-size: 15px;
+    padding: 13px 15px; border: 0; border-bottom: 1px solid var(--border);
+    background: transparent; color: var(--fg); outline: none;
+  }
+  .mdrfc-p-list { margin: 0; padding: 6px 0; list-style: none; overflow-y: auto; flex: 1; }
+  .mdrfc-p-group {
+    padding: 7px 15px 3px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted);
+  }
+  .mdrfc-p-row {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 4px 15px; cursor: pointer; font-size: 13px;
+  }
+  .mdrfc-p-row.active { background: var(--code-bg); }
+  .mdrfc-p-row.active .mdrfc-p-main { color: var(--link); }
+  .mdrfc-p-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mdrfc-p-meta { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+  .mdrfc-p-row mark { background: transparent; color: var(--link); font-weight: 700; }
+  .mdrfc-p-row.active mark { text-decoration: underline; }
+  .mdrfc-p-empty { padding: 14px 15px; color: var(--muted); font-size: 13px; }
+  .mdrfc-p-foot {
+    display: flex; gap: 14px; padding: 7px 15px;
+    border-top: 1px solid var(--border); color: var(--muted); font-size: 11px;
+  }
+  .mdrfc-p-foot kbd {
+    font-family: inherit; border: 1px solid var(--border); border-radius: 3px;
+    padding: 0 4px; margin-right: 3px;
+  }
 </style>
 ${sidebarBootScript}
 </head>
@@ -581,6 +625,8 @@ ${body}
 </div>
 
 ${reloadScript}
+<script>window.__mdrfc = { dirMode: ${dirMode} };</script>
+<script type="module" src="/_palette.js"></script>
 <script>
 (function(){
   var K = "mdrfc.";

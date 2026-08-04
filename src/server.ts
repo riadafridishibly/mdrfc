@@ -7,10 +7,13 @@ import {
   sep,
 } from "node:path";
 import { renderWeb, type TreeNode } from "./render/web.ts";
-import { findFreePort } from "./util.ts";
+import { findFreePort, SKIP_DIRS } from "./util.ts";
 import { openBrowser } from "./open.ts";
 import { listSystemFonts } from "./fonts.ts";
+import { search } from "./search.ts";
 import type { RenderOpts } from "./util.ts";
+import preactSrc from "htm/preact/standalone.module.js" with { type: "text" };
+import paletteSrc from "./client/palette.js" with { type: "text" };
 
 export interface ServerOpts extends RenderOpts {
   content: string;
@@ -20,9 +23,6 @@ export interface ServerOpts extends RenderOpts {
   port: number;
   open: boolean;
 }
-
-/** Directories skipped when scanning for markdown files. */
-const SKIP_DIRS = new Set(["node_modules", ".git", ".hg", ".svn", "dist", "build"]);
 
 /**
  * Build a tree of every `.md` file under `base`, sorted dirs-first then alpha.
@@ -171,6 +171,25 @@ export async function startServer(opts: ServerOpts): Promise<void> {
       // System monospace font list for the settings panel
       if (u.pathname === "/_fonts") {
         return new Response(JSON.stringify(listSystemFonts()), {
+          headers: { "content-type": "application/json; charset=utf-8" },
+        });
+      }
+
+      // Command palette runtime. Served as separate modules rather than inlined
+      // so the ~13 KB bundle isn't re-sent with every in-place navigation.
+      if (u.pathname === "/_preact.js" || u.pathname === "/_palette.js") {
+        return new Response(u.pathname === "/_preact.js" ? preactSrc : paletteSrc, {
+          headers: {
+            "content-type": "text/javascript; charset=utf-8",
+            "cache-control": "max-age=3600",
+          },
+        });
+      }
+
+      // Full-text search across the served directory.
+      if (u.pathname === "/_search") {
+        const hits = baseDir ? search(baseDir, u.searchParams.get("q") ?? "") : [];
+        return new Response(JSON.stringify(hits), {
           headers: { "content-type": "application/json; charset=utf-8" },
         });
       }
