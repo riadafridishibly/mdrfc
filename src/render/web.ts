@@ -198,6 +198,7 @@ function htmlTemplate(
     font-size: 0.92em;
   }
   pre {
+    font-family: inherit;
     background: var(--code-bg);
     padding: 1em;
     border-radius: 6px;
