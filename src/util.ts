@@ -7,6 +7,8 @@ export interface RenderOpts {
   width: number;
   color: boolean;
   theme: Theme;
+  /** Show the parsed frontmatter as a metadata header (it is stripped either way). */
+  frontmatter: boolean;
 }
 
 export const RFC_WIDTH = 72;

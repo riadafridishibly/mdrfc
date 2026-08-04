@@ -49,6 +49,7 @@ FLAGS
   -p, --port <n>            server port (default 3000, auto-increment if busy)
       --no-open             don't auto-open browser (use with --web)
       --no-color            strip ANSI colors → pure RFC text
+      --no-frontmatter      hide the frontmatter block (still stripped from body)
       --width <n>           content width in columns (default 72)
       --theme <auto|light|dark>  web color scheme (default auto)
   -h, --help                show this help
@@ -61,6 +62,49 @@ Default width is **72 columns**, the long-standing RFC line-length convention. B
 
 - Override per-run: `mdrfc README.md --width 80`
 - Pure plain-text RFC look (no color): `mdrfc README.md --no-color`
+
+## Frontmatter
+
+A YAML (`---`) or TOML (`+++`) block at the top of the file is parsed out of
+the document instead of leaking into the body as a stray rule and heading:
+
+```markdown
+---
+title: RFC 9999 — Widget Protocol
+author: Riad
+tags: [rfc, draft]
+---
+
+# Introduction
+```
+
+- **Terminal** — aligned `key: value` lines above a rule, then the body.
+- **Web** — a definition list styled as a metadata header. `title` also becomes
+  the browser page title.
+- `--no-frontmatter` hides the header; the block is stripped from the body
+  either way.
+
+The parser is hand-written (no extra dependency) and covers the subset
+frontmatter actually uses:
+
+- scalars — strings, numbers, booleans, `null`/`~`, quoted values, `\uXXXX`
+  and `\t`-style escapes; dates and times stay strings
+- nested maps, block sequences, sequences of maps
+- flow collections `[a, b]` / `{a: 1}`, including ones spanning several lines
+- multi-line plain scalars (continuation lines fold onto one line)
+- block scalars `|` and `>` with indentation (`|2`) and chomping (`-`, `+`)
+- `#` comments, quote-aware so `https://x#y` survives
+- TOML `key = value`, arrays, and `[table]` / `[table.sub]` headers
+
+Not supported (rare in frontmatter): anchors and aliases (`&a`, `*a`, `<<`) —
+an anchored map still renders, the anchor name is dropped — explicit tags
+(`!!str`), YAML 1.1 `yes`/`no`/`on`/`off` booleans (kept as strings), and
+hex/`.inf`/`.nan` numerics (kept as strings). Nested keys are shown flattened
+(`meta.status`). Malformed frontmatter is ignored rather than fatal.
+
+```sh
+bun test    # parser test suite
+```
 
 ## Directory mode
 
@@ -103,6 +147,7 @@ Each produces a standalone executable named `mdrfc-<os>-<arch>`.
 src/
   main.ts          CLI entry, flag parsing, dispatch
   util.ts          width/port helpers, stdin, less paging, ANSI strip
+  frontmatter.ts   YAML/TOML frontmatter split + subset parser
   open.ts          cross-platform browser open
   server.ts        Bun.serve + WebSocket live-reload + file watcher + md tree
   render/

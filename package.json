@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "bun src/main.ts",
+    "test": "bun test",
     "start": "bun src/main.ts",
     "build": "bun build --compile src/main.ts --outfile mdrfc && node scripts/postbuild.mjs mdrfc",
     "build:macos-arm64": "bun build --compile --target=bun-darwin-arm64 src/main.ts --outfile mdrfc-darwin-arm64 && node scripts/postbuild.mjs mdrfc-darwin-arm64",

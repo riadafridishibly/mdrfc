@@ -1,5 +1,11 @@
 import { Marked } from "marked";
 import type { RenderOpts, Theme } from "../util.ts";
+import {
+  flattenFrontmatter,
+  frontmatterTitle,
+  parseFrontmatter,
+  type FmValue,
+} from "../frontmatter.ts";
 
 export interface TreeNode {
   name: string;
@@ -40,9 +46,21 @@ function renderSidebar(tree: TreeNode, currentRel: string): string {
   return `<aside class="mdrfc-sidebar" aria-label="Files"><div class="mdrfc-tree">${inner}</div></aside>`;
 }
 
+/** Render frontmatter as a definition-list metadata block above the document. */
+function renderFrontmatterHtml(data: Record<string, FmValue>): string {
+  const pairs = flattenFrontmatter(data);
+  if (!pairs.length) return "";
+  const rows = pairs
+    .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v).replace(/\n/g, "<br>")}</dd>`)
+    .join("");
+  return `<dl class="mdrfc-fm">${rows}</dl>`;
+}
+
 /**
  * Render markdown → standalone HTML.
  * RFC-style: monospace, 72ch max content width, centered.
+ * Frontmatter is stripped from the body, shown as a metadata block (unless
+ * disabled) and its `title` becomes the document title.
  * Injects a tiny WebSocket client for live-reload when `reloadToken` is set,
  * and a settings panel (theme / font / size) persisted in localStorage.
  * `tree` (directory mode) adds a fixed sidebar listing every .md file.
@@ -55,15 +73,18 @@ export function renderWeb(
   currentRel?: string
 ): string {
   const marked = new Marked();
-  const body = addHeadingIds(marked.parse(md) as string);
+  const fm = parseFrontmatter(md);
+  const body = addHeadingIds(marked.parse(fm.content) as string);
+  const meta = opts.frontmatter ? renderFrontmatterHtml(fm.data) : "";
   const theme = opts.theme;
   const sidebar = tree ? renderSidebar(tree, currentRel ?? "") : "";
   return htmlTemplate(
-    openExternalLinksInNewTab(body),
+    meta + openExternalLinksInNewTab(body),
     opts.width,
     theme,
     reloadToken,
-    sidebar
+    sidebar,
+    frontmatterTitle(fm.data)
   );
 }
 
@@ -114,7 +135,8 @@ function htmlTemplate(
   width: number,
   theme: Theme,
   reloadToken?: string,
-  sidebar = ""
+  sidebar = "",
+  docTitle?: string
 ): string {
   const reloadScript = reloadToken
     ? `<script>
@@ -134,7 +156,7 @@ function htmlTemplate(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mdrfc</title>
+<title>${docTitle ? esc(docTitle) : "mdrfc"}</title>
 <style>
   :root {
     --font-size: 14px;
@@ -210,6 +232,20 @@ function htmlTemplate(
   th, td { border: 1px solid var(--border); padding: 0.4em 0.7em; text-align: left; }
   th { background: var(--code-bg); }
   img { max-width: 100%; }
+
+  /* ── frontmatter metadata block ─────────────────────────────── */
+  .mdrfc-fm {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 0.15em 1em;
+    margin: 0 0 1.6em;
+    padding: 0 0 1em;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.92em;
+  }
+  .mdrfc-fm dt { color: var(--muted); }
+  .mdrfc-fm dt::after { content: ":"; }
+  .mdrfc-fm dd { margin: 0; overflow-wrap: anywhere; }
 
   /* ── filetree sidebar (directory mode) ──────────────────────── */
   .mdrfc-sidebar {

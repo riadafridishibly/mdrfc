@@ -31,10 +31,17 @@ FLAGS
   -p, --port <n>            server port (default 3000, auto-increment if busy)
   --no-open                 don't auto-open browser (use with --web)
       --no-color            strip ANSI colors → pure RFC text
+      --no-frontmatter      hide the frontmatter block (still stripped from body)
       --width <n>           content width in columns (default ${RFC_WIDTH})
       --theme <auto|light|dark>  web color scheme (default auto)
   -h, --help                show this help
   -V, --version             show version
+
+FRONTMATTER
+  A YAML (\`---\`) or TOML (\`+++\`) block at the top of the file is parsed out
+  of the body and shown as a metadata header — aligned key/value lines in the
+  terminal, a definition list on the web (where \`title\` also becomes the page
+  title). Use --no-frontmatter to hide the header.
 
 DIRECTORY MODE
   Passing a directory instead of a file scans it for *.md files (hidden
@@ -64,6 +71,8 @@ async function main() {
       "no-open": { type: "boolean", default: false },
       color: { type: "boolean", default: true },
       "no-color": { type: "boolean", default: false },
+      frontmatter: { type: "boolean", default: true },
+      "no-frontmatter": { type: "boolean", default: false },
       width: { type: "string" },
       theme: { type: "string", default: "auto" },
       help: { type: "boolean", short: "h", default: false },
@@ -127,6 +136,7 @@ async function main() {
     width: values.width ? parseInt(values.width as string, 10) : RFC_WIDTH,
     color: values.color && !values["no-color"],
     theme,
+    frontmatter: values.frontmatter !== false && !values["no-frontmatter"],
   };
 
   if (values.web) {
