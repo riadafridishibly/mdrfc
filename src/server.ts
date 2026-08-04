@@ -3,6 +3,7 @@ import { dirname, resolve as pathResolve, relative as pathRelative, sep } from "
 import { renderWeb } from "./render/web.ts";
 import { findFreePort } from "./util.ts";
 import { openBrowser } from "./open.ts";
+import { listSystemFonts } from "./fonts.ts";
 import type { RenderOpts } from "./util.ts";
 
 export interface ServerOpts extends RenderOpts {
@@ -85,6 +86,13 @@ export async function startServer(opts: ServerOpts): Promise<void> {
         const ok = server.upgrade(req);
         if (ok) return undefined;
         return new Response("Upgrade required", { status: 426 });
+      }
+
+      // System monospace font list for the settings panel
+      if (u.pathname === "/_fonts") {
+        return new Response(JSON.stringify(listSystemFonts()), {
+          headers: { "content-type": "application/json; charset=utf-8" },
+        });
       }
 
       // Internal link routing: serve a sibling/nested .md file relative
