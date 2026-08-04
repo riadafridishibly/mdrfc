@@ -7,9 +7,38 @@ export interface RenderOpts {
   width: number;
   color: boolean;
   theme: Theme;
+  /** Show the parsed frontmatter as a metadata header (it is stripped either way). */
+  frontmatter: boolean;
 }
 
 export const RFC_WIDTH = 72;
+
+/** Directories skipped when scanning for markdown files. */
+export const SKIP_DIRS = new Set([
+  "node_modules",
+  ".git",
+  ".hg",
+  ".svn",
+  "dist",
+  "build",
+]);
+
+/**
+ * Slug for a heading, matching the ids emitted into the rendered HTML:
+ * lowercase, punctuation dropped, whitespace collapsed to hyphens.
+ * Callers dedupe repeated slugs themselves (`-1`, `-2`, ...).
+ */
+export function slugifyHeading(text: string): string {
+  return (
+    text
+      .replace(/<[^>]+>/g, "") // strip inline tags
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, "") // drop punctuation
+      .trim()
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-") || "section"
+  );
+}
 
 /** Strip ANSI escape codes (color strip for --no-color mode). */
 export function stripAnsi(s: string): string {

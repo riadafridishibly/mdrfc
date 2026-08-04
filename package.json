@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "bun src/main.ts",
+    "test": "bun test",
     "start": "bun src/main.ts",
     "build": "bun build --compile src/main.ts --outfile mdrfc && node scripts/postbuild.mjs mdrfc",
     "build:macos-arm64": "bun build --compile --target=bun-darwin-arm64 src/main.ts --outfile mdrfc-darwin-arm64 && node scripts/postbuild.mjs mdrfc-darwin-arm64",
@@ -17,10 +18,17 @@
     "link": "bun link"
   },
   "dependencies": {
+    "fzf": "0.5.2",
+    "htm": "^3.1.1",
     "marked": "^15",
-    "marked-terminal": "^7.3.0"
+    "marked-terminal": "^7.3.0",
+    "preact": "^10.29.8"
   },
   "engines": {
     "bun": ">=1.1.0"
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "^20.11.1",
+    "happy-dom": "^20.11.1"
   }
 }

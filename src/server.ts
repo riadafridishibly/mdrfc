@@ -7,10 +7,13 @@ import {
   sep,
 } from "node:path";
 import { renderWeb, type TreeNode } from "./render/web.ts";
-import { findFreePort } from "./util.ts";
+import { findFreePort, SKIP_DIRS } from "./util.ts";
 import { openBrowser } from "./open.ts";
 import { listSystemFonts } from "./fonts.ts";
+import { isExtendedQuery, search } from "./search.ts";
 import type { RenderOpts } from "./util.ts";
+import preactSrc from "htm/preact/standalone.module.js" with { type: "text" };
+import paletteSrc from "./client/palette.js" with { type: "text" };
 
 export interface ServerOpts extends RenderOpts {
   content: string;
@@ -20,9 +23,6 @@ export interface ServerOpts extends RenderOpts {
   port: number;
   open: boolean;
 }
-
-/** Directories skipped when scanning for markdown files. */
-const SKIP_DIRS = new Set(["node_modules", ".git", ".hg", ".svn", "dist", "build"]);
 
 /**
  * Build a tree of every `.md` file under `base`, sorted dirs-first then alpha.
@@ -168,9 +168,37 @@ export async function startServer(opts: ServerOpts): Promise<void> {
         return new Response("Upgrade required", { status: 426 });
       }
 
-      // System monospace font list for the settings panel
+      // Installed font families (monospace flagged) for the settings panel
       if (u.pathname === "/_fonts") {
         return new Response(JSON.stringify(listSystemFonts()), {
+          headers: { "content-type": "application/json; charset=utf-8" },
+        });
+      }
+
+      // Command palette runtime. Served as separate modules rather than inlined
+      // so the ~13 KB bundle isn't re-sent with every in-place navigation —
+      // that only refetches the document, so these are not requested again.
+      // Never cached: a viewer that live-reloads must not keep serving a stale
+      // script after the binary it came from has changed underneath it.
+      if (u.pathname === "/_preact.js" || u.pathname === "/_palette.js") {
+        return new Response(u.pathname === "/_preact.js" ? preactSrc : paletteSrc, {
+          headers: {
+            "content-type": "text/javascript; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        });
+      }
+
+      // Full-text search across the served directory. `extended` tells the
+      // palette the query was read as a path filter, so it can say why no
+      // content results came back.
+      if (u.pathname === "/_search") {
+        const q = u.searchParams.get("q") ?? "";
+        const body = {
+          hits: baseDir ? search(baseDir, q) : [],
+          extended: isExtendedQuery(q.trim()),
+        };
+        return new Response(JSON.stringify(body), {
           headers: { "content-type": "application/json; charset=utf-8" },
         });
       }

@@ -1,25 +1,37 @@
 import { execSync } from "node:child_process";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, openSync, readSync, readdirSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 
 /**
- * Detect monospace fonts available on the host.
+ * Detect the fonts available on the host, flagging the monospace ones.
  *
  * Strategy:
- *  1. `fc-list :spacing=mono family` — Linux, or macOS if Homebrew fontconfig
- *     is installed. Cheap and accurate.
+ *  1. `fc-list : family spacing` — Linux, or macOS if Homebrew fontconfig is
+ *     installed. Cheap and accurate; `spacing >= 100` (FC_MONO) is fixed pitch.
  *  2. Scan the OS font directories and parse each sfnt's `name` + `post`
- *     tables directly. Keep only fonts whose `post.isFixedPitch` is non-zero.
+ *     tables directly; `post.isFixedPitch` is the monospace flag.
  *     Handles .ttf / .otf / .ttc (incl. TrueType collections like SF Mono).
+ *     Only the header, the table directory and those two tables are read —
+ *     a few KB per font rather than the whole file, which on a typical macOS
+ *     install is a few gigabytes of glyph data we have no use for.
  *  3. Always merge in a curated default list so the picker is never empty.
+ *
+ * Monospace is a hint, not a filter: RFC output wants fixed pitch, so those
+ * sort first in the picker, but every installed family is offered.
  *
  * Result is cached for the process lifetime — fonts don't change mid-session.
  */
 
-const MAX_BYTES = 60 * 1024 * 1024; // skip pathological files (>60MB)
+const MAX_NAME_BYTES = 256 * 1024; // `name` tables are KBs; cap a corrupt length
+const MAX_TTC_FONTS = 256; // real collections hold a handful; cap a corrupt count
 
-let cache: string[] | null = null;
+export interface SystemFont {
+  name: string;
+  mono: boolean;
+}
+
+let cache: SystemFont[] | null = null;
 
 const DEFAULTS = [
   "Menlo",
@@ -34,23 +46,22 @@ const DEFAULTS = [
   "IBM Plex Mono",
 ];
 
-export function listSystemFonts(): string[] {
+export function listSystemFonts(): SystemFont[] {
   if (cache) return cache;
-  const out = new Set<string>();
+  const out = new Map<string, boolean>();
 
-  // 1. fontconfig (monospace only)
+  // 1. fontconfig — "Family One,Family Two:spacing=100", spacing absent when proportional
   try {
-    const txt = execSync("fc-list :spacing=mono family", {
+    const txt = execSync("fc-list : family spacing", {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 3000,
     });
     for (const line of txt.split("\n")) {
       const colon = line.indexOf(":");
-      const fams = colon >= 0 ? line.slice(colon + 1) : line;
-      for (const f of fams.split(",")) {
-        const t = f.trim();
-        if (t) out.add(t);
+      const spacing = colon >= 0 ? parseInt(line.slice(colon + 1).replace(/^spacing=/, ""), 10) : NaN;
+      for (const f of (colon >= 0 ? line.slice(0, colon) : line).split(",")) {
+        addFamily(out, f.trim(), spacing >= 100);
       }
     }
   } catch {
@@ -61,12 +72,19 @@ export function listSystemFonts(): string[] {
   for (const dir of fontDirs()) scanDir(dir, out);
 
   // 3. curated defaults
-  for (const d of DEFAULTS) out.add(d);
+  for (const d of DEFAULTS) addFamily(out, d, true);
 
-  cache = Array.from(out)
-    .filter((n) => n && !n.startsWith("."))
-    .sort((a, b) => a.localeCompare(b));
+  cache = Array.from(out, ([name, mono]) => ({ name, mono })).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
   return cache;
+}
+
+/** Record a family; monospace wins if any source reports fixed pitch. */
+function addFamily(out: Map<string, boolean>, name: string, mono: boolean): void {
+  // skip empty and Apple-internal dot-prefixed families (not CSS-addressable)
+  if (!name || name.startsWith(".")) return;
+  if (mono || !out.has(name)) out.set(name, mono);
 }
 
 function fontDirs(): string[] {
@@ -95,7 +113,9 @@ function fontDirs(): string[] {
   ];
 }
 
-function scanDir(dir: string, out: Set<string>): void {
+/** Recursively add every family found under `dir`. Exported for tests, which
+ *  need a scan they can point at a fixture directory. */
+export function scanDir(dir: string, out: Map<string, boolean>): void {
   let entries: ReturnType<typeof readdirSync>;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -109,115 +129,101 @@ function scanDir(dir: string, out: Set<string>): void {
   }
 }
 
-function parseFontFile(path: string, out: Set<string>): void {
-  let buf: Buffer;
+function parseFontFile(path: string, out: Map<string, boolean>): void {
+  let fd: number;
   try {
-    if (statSync(path).size > MAX_BYTES) return;
-    buf = readFileSync(path);
+    fd = openSync(path, "r");
   } catch {
     return;
   }
-  if (tag(buf, 0) === "ttcf") {
-    // TrueType Collection: header (tag, u32 version, u32 numFonts, u32[numFonts] offsets)
-    let n = 0;
-    try {
-      n = buf.readUInt32BE(8);
-    } catch {
+  try {
+    const head = readAt(fd, 0, 12);
+    if (!head) return;
+    if (tag(head, 0) !== "ttcf") {
+      parseSfnt(fd, 0, out);
       return;
     }
-    for (let i = 0; i < n; i++) {
-      let off = 0;
-      try {
-        off = buf.readUInt32BE(12 + i * 4);
-      } catch {
-        break;
-      }
-      parseSfnt(buf, off, out);
-    }
-    return;
-  }
-  parseSfnt(buf, 0, out);
-}
-
-function parseSfnt(buf: Buffer, base: number, out: Set<string>): void {
-  let numTables = 0;
-  try {
-    numTables = buf.readUInt16BE(base + 4);
+    // TrueType Collection: header (tag, u32 version, u32 numFonts, u32[numFonts] offsets)
+    const numFonts = Math.min(head.readUInt32BE(8), MAX_TTC_FONTS);
+    const offsets = readAt(fd, 12, numFonts * 4);
+    if (!offsets) return;
+    for (let i = 0; i + 4 <= offsets.length; i += 4) parseSfnt(fd, offsets.readUInt32BE(i), out);
   } catch {
-    return;
-  }
-  let nameOff = -1;
-  let postOff = -1;
-  for (let i = 0; i < numTables; i++) {
-    const rec = base + 12 + i * 16;
-    let t = "";
-    let toff = 0;
-    try {
-      t = tag(buf, rec);
-      toff = buf.readUInt32BE(rec + 8);
-    } catch {
-      break;
-    }
-    if (t === "name") nameOff = toff;
-    else if (t === "post") postOff = toff;
-  }
-  // Monospace gate: post.isFixedPitch lives at offset 12 in the post table
-  // (after version[4] italicAngle[4] underlinePos[2] underlineThick[2]).
-  // Non-zero => fixed pitch. Skip proportional fonts entirely.
-  if (postOff >= 0) {
-    try {
-      if (buf.readUInt32BE(postOff + 12) === 0) return;
-    } catch {
-      /* post table too short; fall through and include */
-    }
-  }
-  if (nameOff >= 0) {
-    const fam = readFamilyName(buf, nameOff);
-    // skip empty and Apple-internal dot-prefixed families (not CSS-addressable)
-    if (fam && !fam.startsWith(".")) out.add(fam);
+    // One malformed font is not worth losing the rest of the scan over.
+  } finally {
+    closeSync(fd);
   }
 }
 
-/** Read nameID=1 (family) from the `name` table; prefer Windows/Unicode. */
-function readFamilyName(buf: Buffer, off: number): string | null {
-  let count = 0;
-  let storage = 0;
+function parseSfnt(fd: number, base: number, out: Map<string, boolean>): void {
+  const header = readAt(fd, base, 12);
+  if (!header) return;
+  const numTables = header.readUInt16BE(4);
+  const dir = readAt(fd, base + 12, numTables * 16);
+  if (!dir) return;
+
+  let nameOff = -1;
+  let nameLen = 0;
+  let postOff = -1;
+  for (let rec = 0; rec < dir.length; rec += 16) {
+    const t = tag(dir, rec);
+    if (t === "name") {
+      nameOff = dir.readUInt32BE(rec + 8);
+      nameLen = dir.readUInt32BE(rec + 12);
+    } else if (t === "post") postOff = dir.readUInt32BE(rec + 8);
+  }
+  if (nameOff < 0) return;
+  const name = readAt(fd, nameOff, Math.min(nameLen, MAX_NAME_BYTES));
+  if (!name) return;
+  const fam = readFamilyName(name);
+  if (!fam) return;
+
+  // post.isFixedPitch lives at offset 12 in the post table (after version[4]
+  // italicAngle[4] underlinePos[2] underlineThick[2]); non-zero => fixed pitch.
+  // A truncated post table just means "unknown", i.e. not monospace.
+  const post = postOff >= 0 ? readAt(fd, postOff + 12, 4) : null;
+  addFamily(out, fam, post !== null && post.readUInt32BE(0) !== 0);
+}
+
+/** Read `len` bytes at `off`; null unless the whole range was there. */
+function readAt(fd: number, off: number, len: number): Buffer | null {
+  if (len <= 0) return null;
   try {
-    count = buf.readUInt16BE(off + 2);
-    storage = off + buf.readUInt16BE(off + 4);
+    const buf = Buffer.allocUnsafe(len);
+    return readSync(fd, buf, 0, len, off) === len ? buf : null;
   } catch {
     return null;
   }
+}
+
+/** Read nameID=1 (family) from a `name` table buffer; prefer Windows/Unicode. */
+function readFamilyName(buf: Buffer): string | null {
+  if (buf.length < 6) return null;
+  const count = buf.readUInt16BE(2);
+  const storage = buf.readUInt16BE(4);
   let best: { prio: number; str: string } | null = null;
   for (let i = 0; i < count; i++) {
-    const rec = off + 6 + i * 12;
-    let platformID: number, encodingID: number, nameID: number;
-    let length: number, strOff: number;
-    try {
-      platformID = buf.readUInt16BE(rec);
-      encodingID = buf.readUInt16BE(rec + 2);
-      nameID = buf.readUInt16BE(rec + 6);
-      length = buf.readUInt16BE(rec + 8);
-      strOff = buf.readUInt16BE(rec + 10);
-    } catch {
-      break;
-    }
+    const rec = 6 + i * 12;
+    if (rec + 12 > buf.length) break;
+    const nameID = buf.readUInt16BE(rec + 6);
     if (nameID !== 1) continue;
-    const prio = namePrio(platformID, encodingID);
+    const platformID = buf.readUInt16BE(rec);
+    const prio = namePrio(platformID, buf.readUInt16BE(rec + 2));
     if (best && prio <= best.prio) continue;
-    const abs = storage + strOff;
+    const abs = storage + buf.readUInt16BE(rec + 10);
+    const end = abs + buf.readUInt16BE(rec + 8);
+    if (end > buf.length) continue;
     const str =
       platformID === 1
-        ? buf.toString("latin1", abs, abs + length) // MacRoman ≈ latin1 for ASCII names
-        : decodeUtf16BE(buf, abs, length);
+        ? buf.toString("latin1", abs, end) // MacRoman ≈ latin1 for ASCII names
+        : decodeUtf16BE(buf, abs, end);
     best = { prio, str };
   }
   return best ? best.str.trim() : null;
 }
 
-function decodeUtf16BE(buf: Buffer, off: number, len: number): string {
+function decodeUtf16BE(buf: Buffer, off: number, end: number): string {
   let s = "";
-  const end = off + len;
   for (let i = off; i + 1 < end; i += 2) {
     s += String.fromCharCode((buf[i] << 8) | buf[i + 1]);
   }

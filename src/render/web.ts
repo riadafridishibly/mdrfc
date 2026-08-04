@@ -1,5 +1,11 @@
 import { Marked } from "marked";
-import type { RenderOpts, Theme } from "../util.ts";
+import { slugifyHeading, type RenderOpts, type Theme } from "../util.ts";
+import {
+  flattenFrontmatter,
+  frontmatterTitle,
+  parseFrontmatter,
+  type FmValue,
+} from "../frontmatter.ts";
 
 export interface TreeNode {
   name: string;
@@ -17,7 +23,11 @@ function esc(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/** Render the filetree (directory mode) as a collapsible sidebar nav. */
+/**
+ * Render the filetree (directory mode) as a collapsible, resizable sidebar nav,
+ * plus its toggle button and drag-to-resize handle.
+ * Folders carry `data-path` so their open/closed state can be persisted.
+ */
 function renderSidebar(tree: TreeNode, currentRel: string): string {
   const renderNodes = (nodes: TreeNode[]): string => {
     if (!nodes.length) return "";
@@ -26,7 +36,7 @@ function renderSidebar(tree: TreeNode, currentRel: string): string {
       if (n.dir) {
         // Folder with at least one .md descendant → render, open by default.
         const inner = renderNodes(n.children);
-        html += `<li><details open><summary>${esc(n.name)}/</summary>${inner}</details></li>`;
+        html += `<li><details open data-path="${esc(n.path)}"><summary>${esc(n.name)}/</summary>${inner}</details></li>`;
       } else {
         const active = n.path === currentRel ? ` class="active" aria-current="page"` : "";
         const href = "/" + encodeURI(n.path).replace(/#/g, "%23");
@@ -37,34 +47,89 @@ function renderSidebar(tree: TreeNode, currentRel: string): string {
   };
   const inner = renderNodes(tree.children);
   if (!inner) return "";
-  return `<aside class="mdrfc-sidebar" aria-label="Files"><div class="mdrfc-tree">${inner}</div></aside>`;
+  return `<button id="mdrfc-sidebar-toggle" class="mdrfc-iconbtn" type="button" title="Toggle file list (Ctrl-B)" aria-label="Toggle file list" aria-expanded="true" aria-controls="mdrfc-sidebar">&#9776;</button>
+<aside id="mdrfc-sidebar" class="mdrfc-sidebar mdrfc-scroll" aria-label="Files"><div class="mdrfc-tree">${inner}</div></aside>
+<div id="mdrfc-resizer" class="mdrfc-resizer" role="separator" aria-orientation="vertical" aria-label="Resize file list" title="Drag to resize · double-click to reset"></div>`;
+}
+
+/** Render frontmatter as a definition-list metadata block above the document. */
+function renderFrontmatterHtml(data: Record<string, FmValue>): string {
+  const pairs = flattenFrontmatter(data);
+  if (!pairs.length) return "";
+  const rows = pairs
+    .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v).replace(/\n/g, "<br>")}</dd>`)
+    .join("");
+  return `<dl class="mdrfc-fm">${rows}</dl>`;
 }
 
 /**
  * Render markdown → standalone HTML.
  * RFC-style: monospace, 72ch max content width, centered.
+ * Frontmatter is stripped from the body, shown as a metadata block (unless
+ * disabled) and its `title` becomes the document title.
  * Injects a tiny WebSocket client for live-reload when `reloadToken` is set,
- * and a settings panel (theme / font / size) persisted in localStorage.
+ * and a settings panel (theme / searchable font picker / size) persisted in
+ * localStorage.
  * `tree` (directory mode) adds a fixed sidebar listing every .md file.
  */
 export function renderWeb(
   md: string,
-  opts: RenderOpts,
+  opts: RenderOpts & { dirMode?: boolean; source?: string },
   reloadToken?: string,
   tree?: TreeNode | null,
   currentRel?: string
 ): string {
   const marked = new Marked();
-  const body = addHeadingIds(marked.parse(md) as string);
+  const fm = parseFrontmatter(md);
+  const body = addCodeBlockTools(addHeadingIds(marked.parse(fm.content) as string));
+  const meta = opts.frontmatter ? renderFrontmatterHtml(fm.data) : "";
   const theme = opts.theme;
   const sidebar = tree ? renderSidebar(tree, currentRel ?? "") : "";
   return htmlTemplate(
-    openExternalLinksInNewTab(body),
+    meta + openExternalLinksInNewTab(body),
     opts.width,
     theme,
     reloadToken,
-    sidebar
+    sidebar,
+    documentTitle(fm.data, body, currentRel || opts.source),
+    opts.dirMode === true
   );
+}
+
+/**
+ * Name the browser tab after the document: a frontmatter `title`, else the
+ * first heading, else the filename. Only a nameless document read off stdin
+ * falls through to the bare tool name.
+ */
+function documentTitle(
+  fmData: Record<string, FmValue>,
+  body: string,
+  path?: string
+): string | undefined {
+  return frontmatterTitle(fmData) ?? firstHeadingText(body) ?? fileTitle(path);
+}
+
+/** The first <h1>'s text, with markup dropped and marked's escapes undone. */
+function firstHeadingText(html: string): string | undefined {
+  const m = html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/);
+  if (!m) return undefined;
+  const text = m[1]
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#(?:39|x27);/g, "'")
+    .replace(/&amp;/g, "&") // last: an escaped ampersand must not re-decode
+    .replace(/\s+/g, " ")
+    .trim();
+  return text || undefined;
+}
+
+/** A path's filename, minus its markdown extension. */
+function fileTitle(path?: string): string | undefined {
+  if (!path) return undefined;
+  const name = (path.split(/[\\/]/).pop() ?? "").replace(/\.mdx?$/i, "").trim();
+  return name || undefined;
 }
 
 /**
@@ -74,14 +139,6 @@ export function renderWeb(
  */
 function addHeadingIds(html: string): string {
   const seen = new Map<string, number>();
-  const slugify = (text: string): string =>
-    text
-      .replace(/<[^>]+>/g, "") // strip inline tags
-      .toLowerCase()
-      .replace(/[^\w\s-]/g, "") // drop punctuation
-      .trim()
-      .replace(/\s+/g, "-")
-      .replace(/-+/g, "-") || "section";
   const uniqueSlug = (slug: string): string => {
     const n = seen.get(slug) ?? 0;
     seen.set(slug, n + 1);
@@ -90,9 +147,28 @@ function addHeadingIds(html: string): string {
   return html.replace(
     /<h([1-6])>([\s\S]*?)<\/h\1>/g,
     (_m, level: string, inner: string) => {
-      const id = uniqueSlug(slugify(inner));
+      const id = uniqueSlug(slugifyHeading(inner));
       return `<h${level} id="${id}">${inner}</h${level}>`;
     }
+  );
+}
+
+/**
+ * Wrap every code block in a positioned container carrying a top-right toolbar:
+ * a line-wrap toggle and a copy button. The toolbar sits outside the <pre> so
+ * it stays put while the block scrolls horizontally; clicks are handled by a
+ * delegated listener, which also covers blocks that arrive via in-place nav.
+ */
+function addCodeBlockTools(html: string): string {
+  const btn = (act: string, label: string, extra = "") =>
+    `<button type="button" class="mdrfc-code-btn" data-act="${act}" title="${label}" aria-label="${label}"${extra}>${act}</button>`;
+  return html.replace(
+    /<pre(\s[^>]*)?>([\s\S]*?)<\/pre>/g,
+    (_m, attrs: string | undefined, inner: string) =>
+      `<div class="mdrfc-code"><div class="mdrfc-code-tools">` +
+      btn("wrap", "Toggle line wrapping", ' aria-pressed="false"') +
+      btn("copy", "Copy code") +
+      `</div><pre${attrs ?? ""}>${inner}</pre></div>`
   );
 }
 
@@ -114,7 +190,9 @@ function htmlTemplate(
   width: number,
   theme: Theme,
   reloadToken?: string,
-  sidebar = ""
+  sidebar = "",
+  docTitle?: string,
+  dirMode = false
 ): string {
   const reloadScript = reloadToken
     ? `<script>
@@ -129,27 +207,193 @@ function htmlTemplate(
   const htmlThemeAttr =
     theme === "light" || theme === "dark" ? ` data-theme="${theme}"` : "";
 
+  // Runs before first paint so the sidebar never flashes at the wrong
+  // width or slides in from collapsed on every navigation.
+  const sidebarBootScript = sidebar
+    ? `<script>
+(function(){
+  try {
+    var root = document.documentElement;
+    var w = localStorage.getItem("mdrfc.sidebarW");
+    if(w) root.style.setProperty("--sidebar-w", parseInt(w,10)+"px");
+    var collapsed = localStorage.getItem("mdrfc.sidebarCollapsed") === "1";
+    // narrow screens start collapsed regardless of the desktop preference
+    if(window.matchMedia("(max-width: 720px)").matches) collapsed = true;
+    if(collapsed) root.classList.add("mdrfc-sidebar-collapsed");
+  } catch(e){}
+})();
+</script>`
+    : "";
+
+  // Sidebar behaviour: collapse, drag-resize, and persisted tree state.
+  // Navigation swaps <main> in place instead of reloading, so the tree's
+  // scroll position and folder open/closed state survive a click.
+  const sidebarScript = sidebar
+    ? `<script>
+(function(){
+  var aside = document.getElementById("mdrfc-sidebar");
+  var resizer = document.getElementById("mdrfc-resizer");
+  var toggle = document.getElementById("mdrfc-sidebar-toggle");
+  var main = document.querySelector("main");
+  if(!aside || !resizer || !toggle || !main) return;
+  var root = document.documentElement;
+  var K = "mdrfc.";
+  function rd(k, d){ try{ var v = localStorage.getItem(K+k); return v==null?d:v; }catch(e){ return d; } }
+  function wr(k, v){ try{ localStorage.setItem(K+k, v); }catch(e){} }
+  function isNarrow(){ return window.matchMedia("(max-width: 720px)").matches; }
+
+  // ── collapse ────────────────────────────────────────────────
+  function collapsed(){ return root.classList.contains("mdrfc-sidebar-collapsed"); }
+  function setCollapsed(v, persist){
+    root.classList.toggle("mdrfc-sidebar-collapsed", v);
+    toggle.setAttribute("aria-expanded", v ? "false" : "true");
+    if(persist) wr("sidebarCollapsed", v ? "1" : "0");
+  }
+  setCollapsed(collapsed(), false);
+  toggle.addEventListener("click", function(){ setCollapsed(!collapsed(), !isNarrow()); });
+  document.addEventListener("keydown", function(e){
+    if((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "b" || e.key === "B")){
+      e.preventDefault();
+      setCollapsed(!collapsed(), !isNarrow());
+    }
+  });
+
+  // ── drag to resize ──────────────────────────────────────────
+  var MIN = 160, MAX = 560, DEFAULT_W = 248;
+  var width = parseInt(rd("sidebarW", String(DEFAULT_W)), 10) || DEFAULT_W;
+  var dragging = false;
+  function setWidth(px, persist){
+    width = Math.min(MAX, Math.max(MIN, Math.round(px)));
+    root.style.setProperty("--sidebar-w", width + "px");
+    if(persist) wr("sidebarW", String(width));
+  }
+  resizer.addEventListener("pointerdown", function(e){
+    if(e.button !== 0) return;
+    dragging = true;
+    resizer.classList.add("dragging");
+    document.body.classList.add("mdrfc-resizing");
+    resizer.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  resizer.addEventListener("pointermove", function(e){
+    if(dragging) setWidth(e.clientX, false);
+  });
+  function endDrag(){
+    if(!dragging) return;
+    dragging = false;
+    resizer.classList.remove("dragging");
+    document.body.classList.remove("mdrfc-resizing");
+    wr("sidebarW", String(width));
+  }
+  resizer.addEventListener("pointerup", endDrag);
+  resizer.addEventListener("pointercancel", endDrag);
+  resizer.addEventListener("dblclick", function(){ setWidth(DEFAULT_W, true); });
+
+  // ── folder open/closed state, keyed by folder path ──────────
+  var closed;
+  try { closed = new Set(JSON.parse(rd("treeClosed", "[]"))); }
+  catch(e){ closed = new Set(); }
+  Array.prototype.forEach.call(aside.querySelectorAll("details[data-path]"), function(d){
+    d.open = !closed.has(d.getAttribute("data-path"));
+  });
+  // 'toggle' doesn't bubble, so listen in the capture phase
+  aside.addEventListener("toggle", function(e){
+    var d = e.target;
+    if(!d || d.tagName !== "DETAILS") return;
+    var p = d.getAttribute("data-path");
+    if(!p) return;
+    if(d.open) closed.delete(p); else closed.add(p);
+    wr("treeClosed", JSON.stringify(Array.from(closed)));
+  }, true);
+
+  // ── scroll position (survives a hard reload too) ────────────
+  var SCROLL = K + "treeScroll";
+  try {
+    var saved = sessionStorage.getItem(SCROLL);
+    if(saved) aside.scrollTop = parseInt(saved, 10) || 0;
+  } catch(e){}
+  var pending = 0;
+  aside.addEventListener("scroll", function(){
+    if(pending) return;
+    pending = requestAnimationFrame(function(){
+      pending = 0;
+      try { sessionStorage.setItem(SCROLL, String(aside.scrollTop)); } catch(e){}
+    });
+  }, { passive: true });
+
+  // ── in-place navigation ─────────────────────────────────────
+  function swap(html, url){
+    var doc = new DOMParser().parseFromString(html, "text/html");
+    var next = doc.querySelector("main");
+    if(!next){ location.href = url; return; }
+    main.innerHTML = next.innerHTML;
+    if(doc.title) document.title = doc.title;
+    var path = new URL(url, location.href).pathname;
+    Array.prototype.forEach.call(aside.querySelectorAll("a"), function(a){
+      var on = a.pathname === path;
+      a.classList.toggle("active", on);
+      if(on) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
+    });
+    var hash = new URL(url, location.href).hash;
+    var target = hash ? document.getElementById(decodeURIComponent(hash.slice(1))) : null;
+    if(target) target.scrollIntoView();
+    else window.scrollTo(0, 0);
+  }
+  // exposed so the command palette can reuse in-place navigation
+  window.mdrfcNavigate = function(url){
+    fetch(url).then(function(r){ return r.text(); }).then(function(html){
+      history.pushState({ mdrfc: 1 }, "", url);
+      swap(html, url);
+      if(isNarrow()) setCollapsed(true, false);
+    }).catch(function(){ location.href = url; });
+  };
+  aside.addEventListener("click", function(e){
+    var a = e.target.closest && e.target.closest("a");
+    if(!a || !aside.contains(a)) return;
+    if(e.defaultPrevented || e.button !== 0) return;
+    if(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if(a.target && a.target !== "_self") return;
+    if(a.origin !== location.origin) return;
+    e.preventDefault();
+    window.mdrfcNavigate(a.href);
+  });
+  window.addEventListener("popstate", function(){
+    fetch(location.href)
+      .then(function(r){ return r.text(); })
+      .then(function(html){ swap(html, location.href); })
+      .catch(function(){ location.reload(); });
+  });
+})();
+</script>`
+    : "";
+
   return `<!doctype html>
 <html lang="en"${htmlThemeAttr}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mdrfc</title>
+<title>${docTitle ? esc(docTitle) : "mdrfc"}</title>
 <style>
   :root {
     --font-size: 14px;
+    --sidebar-w: 248px;
     --bg: #ffffff;
     --fg: #1a1a1a;
     --muted: #666666;
     --border: #d0d0d0;
     --code-bg: #f4f4f4;
     --link: #2563eb;
+    --scroll-thumb: rgba(0,0,0,.22);
+    --scroll-thumb-hover: rgba(0,0,0,.38);
   }
   html[data-theme="light"] { color-scheme: light; }
   html[data-theme="dark"] {
     color-scheme: dark;
     --bg: #1a1a1a; --fg: #e0e0e0; --muted: #999; --border: #444;
     --code-bg: #2a2a2a; --link: #6cb6ff;
+    --scroll-thumb: rgba(255,255,255,.20);
+    --scroll-thumb-hover: rgba(255,255,255,.34);
   }
   /* auto: follow OS, unless user forced light */
   @media (prefers-color-scheme: dark) {
@@ -157,6 +401,8 @@ function htmlTemplate(
       color-scheme: dark;
       --bg: #1a1a1a; --fg: #e0e0e0; --muted: #999; --border: #444;
       --code-bg: #2a2a2a; --link: #6cb6ff;
+      --scroll-thumb: rgba(255,255,255,.20);
+      --scroll-thumb-hover: rgba(255,255,255,.34);
     }
   }
   body {
@@ -206,21 +452,101 @@ function htmlTemplate(
     line-height: 1.4;
   }
   pre code { background: none; padding: 0; }
+
+  /* ── code block toolbar (wrap / copy) ───────────────────────── */
+  .mdrfc-code { position: relative; }
+  .mdrfc-code pre { margin: 1em 0; }
+  .mdrfc-code-tools {
+    position: absolute; top: 6px; right: 6px;
+    display: flex; gap: 4px;
+    opacity: 0; transition: opacity .12s;
+  }
+  .mdrfc-code:hover .mdrfc-code-tools,
+  .mdrfc-code-tools:focus-within { opacity: 1; }
+  @media (hover: none) { .mdrfc-code-tools { opacity: .65; } }
+  .mdrfc-code-btn {
+    font-family: inherit; font-size: 11px; line-height: 1;
+    padding: 4px 6px; border-radius: 4px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--muted);
+    cursor: pointer;
+  }
+  .mdrfc-code-btn:hover { color: var(--fg); }
+  .mdrfc-code-btn[aria-pressed="true"] { color: var(--link); border-color: var(--link); }
+  .mdrfc-code.wrap pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   table { border-collapse: collapse; margin: 1em 0; font-size: 0.92em; }
   th, td { border: 1px solid var(--border); padding: 0.4em 0.7em; text-align: left; }
   th { background: var(--code-bg); }
   img { max-width: 100%; }
 
+  /* ── frontmatter metadata block ─────────────────────────────── */
+  .mdrfc-fm {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 0.15em 1em;
+    margin: 0 0 1.6em;
+    padding: 0 0 1em;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.92em;
+  }
+  .mdrfc-fm dt { color: var(--muted); }
+  .mdrfc-fm dt::after { content: ":"; }
+  .mdrfc-fm dd { margin: 0; overflow-wrap: anywhere; }
+
   /* ── filetree sidebar (directory mode) ──────────────────────── */
   .mdrfc-sidebar {
     position: fixed; top: 0; left: 0; bottom: 0;
-    width: 248px; overflow-y: auto;
+    width: var(--sidebar-w); overflow-y: auto; overflow-x: hidden;
     background: var(--bg); border-right: 1px solid var(--border);
-    padding: 14px 6px 14px 12px; box-sizing: border-box;
+    padding: 52px 4px 14px 12px; box-sizing: border-box;
     font-size: 13px; line-height: 1.5;
     z-index: 40;
+    transition: transform .15s ease;
   }
-  body.mdrfc-has-sidebar { padding-left: 248px; }
+
+  /* Slim scrollbars, shared geometry. The document thumb stays visible; the
+     app chrome (.mdrfc-scroll) reveals its thumb on hover. Both reserve the
+     gutter so nothing reflows. */
+  html, .mdrfc-scroll {
+    scrollbar-width: thin;
+    scrollbar-gutter: stable;
+  }
+  html { scrollbar-color: var(--scroll-thumb) transparent; }
+  .mdrfc-scroll { scrollbar-color: transparent transparent; }
+  .mdrfc-scroll:hover, .mdrfc-scroll:focus-within {
+    scrollbar-color: var(--scroll-thumb) transparent;
+  }
+  html::-webkit-scrollbar,
+  .mdrfc-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+  html::-webkit-scrollbar-track,
+  .mdrfc-scroll::-webkit-scrollbar-track { background: transparent; }
+  html::-webkit-scrollbar-thumb,
+  .mdrfc-scroll::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+    transition: background-color .15s;
+  }
+  html::-webkit-scrollbar-thumb { background-color: var(--scroll-thumb); }
+  .mdrfc-scroll::-webkit-scrollbar-thumb { background-color: transparent; }
+  .mdrfc-scroll:hover::-webkit-scrollbar-thumb { background-color: var(--scroll-thumb); }
+  html::-webkit-scrollbar-thumb:hover,
+  .mdrfc-scroll::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-thumb-hover); }
+  html::-webkit-scrollbar-corner,
+  .mdrfc-scroll::-webkit-scrollbar-corner { background: transparent; }
+  body.mdrfc-has-sidebar { padding-left: var(--sidebar-w); }
+  html.mdrfc-sidebar-collapsed .mdrfc-sidebar { transform: translateX(-100%); }
+  html.mdrfc-sidebar-collapsed body.mdrfc-has-sidebar { padding-left: 1rem; }
+
+  /* drag handle: sits on the sidebar's right edge, hidden when collapsed */
+  .mdrfc-resizer {
+    position: fixed; top: 0; bottom: 0; left: calc(var(--sidebar-w) - 3px);
+    width: 6px; z-index: 45; cursor: col-resize;
+    background: transparent; transition: background .12s;
+  }
+  .mdrfc-resizer:hover, .mdrfc-resizer.dragging { background: var(--link); }
+  html.mdrfc-sidebar-collapsed .mdrfc-resizer { display: none; }
+  body.mdrfc-resizing { user-select: none; cursor: col-resize; }
+
   .mdrfc-tree ul { list-style: none; margin: 0; padding: 0; }
   .mdrfc-tree li { margin: 0; }
   .mdrfc-tree summary {
@@ -241,21 +567,25 @@ function htmlTemplate(
   }
   .mdrfc-tree a:hover { background: var(--code-bg); }
   .mdrfc-tree a.active { color: var(--link); font-weight: 600; }
+  /* narrow screens: sidebar overlays the content instead of reserving space */
   @media (max-width: 720px) {
-    .mdrfc-sidebar { display: none; }
+    .mdrfc-sidebar { width: min(280px, 85vw); box-shadow: 2px 0 14px rgba(0,0,0,.25); }
     body.mdrfc-has-sidebar { padding-left: 1rem; }
+    .mdrfc-resizer { display: none; }
   }
 
-  /* ── settings panel ─────────────────────────────────────────── */
-  #mdrfc-gear {
-    position: fixed; top: 12px; right: 12px; z-index: 50;
+  /* ── floating icon buttons (sidebar toggle, settings gear) ──── */
+  .mdrfc-iconbtn {
+    position: fixed; top: 12px; z-index: 50;
     width: 34px; height: 34px; border-radius: 6px;
     border: 1px solid var(--border); background: var(--code-bg); color: var(--fg);
     cursor: pointer; font-size: 16px; line-height: 1;
     display: flex; align-items: center; justify-content: center;
     opacity: .55; transition: opacity .15s;
   }
-  #mdrfc-gear:hover { opacity: 1; }
+  .mdrfc-iconbtn:hover { opacity: 1; }
+  #mdrfc-gear { right: 12px; }
+  #mdrfc-sidebar-toggle { left: 12px; }
   #mdrfc-panel {
     position: fixed; top: 0; right: 0; height: 100vh; width: 280px;
     background: var(--bg); border-left: 1px solid var(--border);
@@ -275,6 +605,29 @@ function htmlTemplate(
     background: var(--bg); color: var(--fg); border: 1px solid var(--border);
     border-radius: 4px; padding: 5px 6px;
   }
+  #mdrfc-panel .font-box { position: relative; }
+  /* Overlays the rows below instead of shoving them down the panel. */
+  #mdrfc-panel .font-list {
+    position: absolute; top: 100%; left: 0; right: 0; z-index: 1;
+    margin: 4px 0 0; padding: 4px 0; list-style: none;
+    max-height: 210px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: var(--bg);
+    box-shadow: 0 6px 18px rgba(0,0,0,.18);
+  }
+  #mdrfc-panel .font-list:empty { display: none; }
+  #mdrfc-panel .font-list li {
+    padding: 4px 8px; cursor: pointer; display: flex; gap: 8px;
+    align-items: baseline; justify-content: space-between;
+  }
+  #mdrfc-panel .font-list li.active,
+  #mdrfc-panel .font-list li:hover { background: var(--code-bg); }
+  #mdrfc-panel .tag {
+    color: var(--muted); font-size: 10px; text-transform: uppercase;
+    letter-spacing: .04em; flex: none;
+  }
+  #mdrfc-panel .font-list .sample { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #mdrfc-panel .font-empty { padding: 6px 8px; color: var(--muted); }
   #mdrfc-panel .size-row { display: flex; gap: 8px; align-items: center; }
   #mdrfc-panel input[type=range] { flex: 1; }
   #mdrfc-panel .close {
@@ -287,15 +640,86 @@ function htmlTemplate(
     background: var(--code-bg); color: var(--fg); border-radius: 4px;
     cursor: pointer; font-family: inherit; font-size: 13px;
   }
+
+  /* ── command palette (Ctrl/Cmd-K) ───────────────────────────── */
+  .mdrfc-p-backdrop {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,.38);
+    display: flex; justify-content: center; align-items: flex-start;
+    padding: 10vh 1rem 1rem;
+  }
+  .mdrfc-p-box {
+    width: 100%; max-width: 640px; max-height: 70vh;
+    display: flex; flex-direction: column;
+    background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.35); overflow: hidden;
+  }
+  .mdrfc-p-input {
+    font-family: inherit; font-size: 15px;
+    padding: 13px 15px; border: 0; border-bottom: 1px solid var(--border);
+    background: transparent; color: var(--fg); outline: none;
+  }
+  .mdrfc-p-list { margin: 0; padding: 6px 0; list-style: none; overflow-y: auto; flex: 1; }
+  .mdrfc-p-group {
+    padding: 7px 15px 3px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted);
+  }
+  .mdrfc-p-row {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 4px 15px; cursor: pointer; font-size: 13px;
+  }
+  .mdrfc-p-row.active { background: var(--code-bg); }
+  .mdrfc-p-row.active .mdrfc-p-main { color: var(--link); }
+  .mdrfc-p-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Path header over a file's hits. The directory prefix absorbs the
+     truncation so the filename — and the snippet below it — stay whole. */
+  .mdrfc-p-file {
+    display: flex; align-items: baseline;
+    padding: 8px 15px 2px; font-size: 11px; color: var(--muted);
+  }
+  .mdrfc-p-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mdrfc-p-base { flex-shrink: 0; color: var(--fg); opacity: .8; }
+  .mdrfc-p-line {
+    flex: 0 0 auto; min-width: 2.5em; text-align: right;
+    color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
+  }
+  .mdrfc-p-row mark { background: transparent; color: var(--link); font-weight: 700; }
+  .mdrfc-p-row.active mark { text-decoration: underline; }
+  .mdrfc-p-empty { padding: 14px 15px; color: var(--muted); font-size: 13px; }
+  .mdrfc-p-hint {
+    display: flex; flex-wrap: wrap; gap: 3px 12px;
+    padding: 7px 15px; border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 11px;
+  }
+  .mdrfc-p-hint code {
+    background: var(--code-bg); color: var(--fg);
+    border-radius: 3px; padding: 0 4px; margin-right: 5px; font-size: 11px;
+  }
+  .mdrfc-p-hint.active { color: var(--link); }
+  .mdrfc-p-hint.error { color: #d33; }
+  html[data-theme="dark"] .mdrfc-p-hint.error { color: #ff8080; }
+  @media (prefers-color-scheme: dark) {
+    html:not([data-theme="light"]) .mdrfc-p-hint.error { color: #ff8080; }
+  }
+  .mdrfc-p-foot {
+    display: flex; gap: 14px; padding: 7px 15px;
+    border-top: 1px solid var(--border); color: var(--muted); font-size: 11px;
+  }
+  .mdrfc-p-foot kbd {
+    font-family: inherit; border: 1px solid var(--border); border-radius: 3px;
+    padding: 0 4px; margin-right: 3px;
+  }
 </style>
+${sidebarBootScript}
 </head>
 <body${sidebar ? ' class="mdrfc-has-sidebar"' : ""}>
 ${sidebar}<main>
 ${body}
 </main>
 
-<button id="mdrfc-gear" type="button" title="Settings" aria-label="Settings">&#9881;</button>
-<div id="mdrfc-panel" role="dialog" aria-label="Settings" aria-hidden="true">
+<button id="mdrfc-gear" class="mdrfc-iconbtn" type="button" title="Settings" aria-label="Settings">&#9881;</button>
+<div id="mdrfc-panel" class="mdrfc-scroll" role="dialog" aria-label="Settings" aria-hidden="true">
   <button type="button" class="close" id="mdrfc-close" aria-label="Close">&times;</button>
   <h2>Settings</h2>
   <div class="row">
@@ -306,13 +730,12 @@ ${body}
       <option value="dark">Dark</option>
     </select>
   </div>
-  <div class="row">
-    <label for="mdrfc-font">Font</label>
-    <select id="mdrfc-font"></select>
-  </div>
-  <div class="row">
-    <label for="mdrfc-font-custom">Custom font name</label>
-    <input id="mdrfc-font-custom" type="text" placeholder="e.g. Comic Sans MS" spellcheck="false">
+  <div class="row font-box">
+    <label for="mdrfc-font">Font <span class="tag" id="mdrfc-font-count"></span></label>
+    <input id="mdrfc-font" type="text" placeholder="Search installed fonts&hellip;" spellcheck="false"
+           autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list"
+           aria-controls="mdrfc-font-list">
+    <ul id="mdrfc-font-list" class="font-list" role="listbox"></ul>
   </div>
   <div class="row">
     <label for="mdrfc-size">Font size <span id="mdrfc-size-val"></span></label>
@@ -327,6 +750,8 @@ ${body}
 </div>
 
 ${reloadScript}
+<script>window.__mdrfc = { dirMode: ${dirMode} };</script>
+<script type="module" src="/_palette.js"></script>
 <script>
 (function(){
   var K = "mdrfc.";
@@ -336,8 +761,9 @@ ${reloadScript}
   var panel = document.getElementById("mdrfc-panel");
   var closeBtn = document.getElementById("mdrfc-close");
   var themeSel = document.getElementById("mdrfc-theme");
-  var fontSel = document.getElementById("mdrfc-font");
-  var fontCustom = document.getElementById("mdrfc-font-custom");
+  var fontInput = document.getElementById("mdrfc-font");
+  var fontList = document.getElementById("mdrfc-font-list");
+  var fontCount = document.getElementById("mdrfc-font-count");
   var sizeRange = document.getElementById("mdrfc-size");
   var sizeNum = document.getElementById("mdrfc-size-num");
   var sizeVal = document.getElementById("mdrfc-size-val");
@@ -369,7 +795,7 @@ ${reloadScript}
   setTheme(t);
 
   var f = rd("font", "");
-  fontCustom.value = f;
+  fontInput.value = f;
   applyFont(f);
 
   var s = rd("size", "");
@@ -379,16 +805,14 @@ ${reloadScript}
   themeSel.addEventListener("change", function(){
     setTheme(themeSel.value); wr("theme", themeSel.value);
   });
-  fontSel.addEventListener("change", function(){
-    var v = fontSel.value;
-    if(!v) return;
-    fontCustom.value = v;
-    applyFont(v); wr("font", v);
-  });
-  fontCustom.addEventListener("input", function(){
-    var v = fontCustom.value.trim();
-    applyFont(v); wr("font", v);
-    fontSel.value = v && Array.prototype.some.call(fontSel.options, function(o){ return o.value===v; }) ? v : "";
+  // Typing only filters the list. The font changes when a family is chosen —
+  // a row clicked, or Enter pressed — so a half-typed query never becomes the
+  // page font and never reaches localStorage.
+  fontInput.addEventListener("input", function(){ renderFonts(fontInput.value.trim()); });
+  fontInput.addEventListener("focus", function(){ renderFonts(fontInput.value.trim()); });
+  fontInput.addEventListener("keydown", onFontKey);
+  document.addEventListener("click", function(e){
+    if(!fontInput.contains(e.target) && !fontList.contains(e.target)) cancelFontSearch();
   });
   function onSize(){
     var v = sizeRange.value;
@@ -422,30 +846,199 @@ ${reloadScript}
   closeBtn.addEventListener("click", closePanel);
   document.addEventListener("keydown", function(e){ if(e.key==="Escape") closePanel(); });
 
+  // ── font picker: search over every installed family, monospace first ──
+  var MAX_ROWS = 100;
+  var fonts = [];        // [{name, mono}]
+  var shown = [];        // currently rendered subset
+  var active = -1;
   var fontsLoaded = false;
+
   function loadFonts(){
     if(fontsLoaded) return; fontsLoaded = true;
     fetch("/_fonts").then(function(r){ return r.json(); }).then(function(list){
-      var cur = fontCustom.value.trim();
-      fontSel.innerHTML = "";
-      var placeholder = document.createElement("option");
-      placeholder.value = ""; placeholder.textContent = cur ? "(custom: "+cur+")" : "(default)";
-      fontSel.appendChild(placeholder);
-      if(list && list.length){
-        var sep = document.createElement("option");
-        sep.disabled = true; sep.textContent = "— system monospace —";
-        fontSel.appendChild(sep);
-        list.forEach(function(name){
-          var o = document.createElement("option");
-          o.value = name; o.textContent = name;
-          fontSel.appendChild(o);
-        });
+      fonts = list || [];
+      var mono = 0;
+      fonts.forEach(function(f){ if(f.mono) mono++; });
+      fontCount.textContent = fonts.length ? "(" + mono + " mono of " + fonts.length + ")" : "";
+      showDefaultFont();
+      if(document.activeElement === fontInput) renderFonts(fontInput.value.trim());
+    }).catch(function(){ /* fonts endpoint unavailable; typing a family still works */ });
+  }
+
+  // An empty field falls through to the stylesheet's stack, so name the family
+  // it lands on. Read the stack off the body rather than repeating it here —
+  // the inline style is only set when a font is chosen, i.e. never when empty.
+  var GENERIC = /^(ui-)?(monospace|serif|sans-serif|rounded)$|^(system-ui|cursive|fantasy|emoji|math|fangsong)$/;
+  function showDefaultFont(){
+    if(fontInput.value || !fonts.length) return;
+    var stack = getComputedStyle(document.body).fontFamily.split(",");
+    for(var i = 0; i < stack.length; i++){
+      var fam = stack[i].trim().replace(/^["']|["']$/g, "");
+      if(GENERIC.test(fam)) continue;
+      for(var k = 0; k < fonts.length; k++){
+        if(fonts[k].name === fam){
+          fontInput.placeholder = fam + " (system default)";
+          return;
+        }
       }
-      fontSel.value = cur && Array.prototype.some.call(fontSel.options, function(o){ return o.value===cur; }) ? cur : "";
-    }).catch(function(){ /* fonts endpoint unavailable; picker stays minimal */ });
+    }
+  }
+
+  // Rank: exact > prefix > word start > substring > subsequence. Monospace
+  // wins ties — proportional text breaks the RFC column alignment.
+  function score(name, q){
+    if(!q) return 1;
+    var n = name.toLowerCase();
+    if(n === q) return 100;
+    var at = n.indexOf(q);
+    if(at === 0) return 80;
+    if(at > 0) return n[at-1] === " " ? 60 : 40;
+    var i = 0;
+    for(var c = 0; c < n.length && i < q.length; c++) if(n[c] === q[i]) i++;
+    return i === q.length ? 20 : 0;
+  }
+
+  function renderFonts(query){
+    var q = query.toLowerCase();
+    shown = fonts
+      .map(function(f){ return { f: f, s: score(f.name, q) }; })
+      .filter(function(r){ return r.s > 0; })
+      .sort(function(a, b){
+        return (b.s - a.s) || (b.f.mono - a.f.mono) || a.f.name.localeCompare(b.f.name);
+      })
+      .map(function(r){ return r.f; });
+
+    var extra = shown.length - MAX_ROWS;
+    shown = shown.slice(0, MAX_ROWS);
+    fontList.innerHTML = "";
+    if(!fonts.length) return;                        // still loading, or endpoint down
+    if(!shown.length){
+      fontList.appendChild(row("No installed family matches — it is applied as typed.", "", true));
+      return;
+    }
+    shown.forEach(function(f, i){
+      var li = row(f.name, f.mono ? "mono" : "", false);
+      li.style.fontFamily = '"' + f.name.replace(/"/g, "") + '", ui-monospace, monospace';
+      li.addEventListener("click", function(){ pickFont(f.name); });
+      li.addEventListener("mousemove", function(){ setActive(i); });
+      fontList.appendChild(li);
+    });
+    if(extra > 0) fontList.appendChild(row("+" + extra + " more — keep typing", "", true));
+    setActive(-1);
+    fontInput.setAttribute("aria-expanded", "true");
+  }
+
+  function row(text, tag, muted){
+    var li = document.createElement("li");
+    if(muted){ li.className = "font-empty"; li.textContent = text; return li; }
+    li.setAttribute("role", "option");
+    var s = document.createElement("span");
+    s.className = "sample"; s.textContent = text;
+    li.appendChild(s);
+    if(tag){
+      var t = document.createElement("span");
+      t.className = "tag"; t.textContent = tag;
+      li.appendChild(t);
+    }
+    return li;
+  }
+
+  function setActive(i){
+    active = i;
+    var items = fontList.querySelectorAll("li[role=option]");
+    for(var k = 0; k < items.length; k++) items[k].classList.toggle("active", k === i);
+    if(i >= 0 && items[i]) items[i].scrollIntoView({ block: "nearest" });
+  }
+
+  function pickFont(name){
+    fontInput.value = name;
+    applyFont(name);
+    if(name) wr("font", name); else rm("font");
+    hideFonts();
+  }
+
+  /** Abandon the search: drop the query and show the family in force. */
+  function cancelFontSearch(){
+    fontInput.value = rd("font", "");
+    hideFonts();
+  }
+
+  function hideFonts(){
+    fontList.innerHTML = "";
+    active = -1;
+    fontInput.setAttribute("aria-expanded", "false");
+  }
+
+  function onFontKey(e){
+    var open = shown.length > 0 && fontList.childElementCount > 0;
+    if(e.key === "ArrowDown" || e.key === "ArrowUp"){
+      if(!open){ renderFonts(fontInput.value.trim()); return; }
+      e.preventDefault();
+      var next = active + (e.key === "ArrowDown" ? 1 : -1);
+      setActive((next + shown.length) % shown.length);
+    } else if(e.key === "Enter"){
+      e.preventDefault();
+      // A highlighted row wins; otherwise commit the text as typed, which is
+      // how a family the machine has no record of still gets applied.
+      pickFont(open && active >= 0 ? shown[active].name : fontInput.value.trim());
+    } else if(e.key === "Escape"){
+      e.stopPropagation();               // leave the search, keep the panel open
+      cancelFontSearch();
+    }
   }
 })();
 </script>
+<script>
+(function(){
+  // Delegated so blocks swapped in by in-place navigation keep working.
+  document.addEventListener("click", function(e){
+    var btn = e.target.closest && e.target.closest(".mdrfc-code-btn");
+    if(!btn) return;
+    var box = btn.closest(".mdrfc-code");
+    if(!box) return;
+    if(btn.dataset.act === "wrap"){
+      var on = box.classList.toggle("wrap");
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      return;
+    }
+    var code = box.querySelector("pre");
+    copy(code ? code.textContent : "", btn);
+  });
+
+  function copy(text, btn){
+    write(text).then(function(){ flash(btn, "copied"); })
+               .catch(function(){ flash(btn, "failed"); });
+  }
+
+  // navigator.clipboard is absent on plain-http origins other than localhost,
+  // which is exactly how this server gets reached over a LAN.
+  function write(text){
+    if(navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    return new Promise(function(resolve, reject){
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.cssText = "position:fixed;top:0;left:-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch(err){}
+      document.body.removeChild(ta);
+      ok ? resolve() : reject();
+    });
+  }
+
+  function flash(btn, msg){
+    if(btn.dataset.busy) clearTimeout(Number(btn.dataset.busy));
+    btn.textContent = msg;
+    btn.dataset.busy = String(setTimeout(function(){
+      btn.textContent = "copy";
+      delete btn.dataset.busy;
+    }, 1200));
+  }
+})();
+</script>
+${sidebarScript}
 </body>
 </html>`;
 }
