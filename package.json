@@ -18,6 +18,7 @@
     "link": "bun link"
   },
   "dependencies": {
+    "fzf": "0.5.2",
     "htm": "^3.1.1",
     "marked": "^15",
     "marked-terminal": "^7.3.0",

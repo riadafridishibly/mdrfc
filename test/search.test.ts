@@ -37,7 +37,7 @@ describe("fuzzyMatch", () => {
   test("matches a subsequence and reports offsets", () => {
     const r = fuzzyMatch("advcfg", "guide/advanced-config.md");
     expect(r).not.toBeNull();
-    expect(r!.indices).toEqual([6, 7, 8, 11, 18, 20]);
+    expect(r!.indices).toEqual([6, 7, 8, 15, 18, 20]);
   });
 
   test("rejects a non-subsequence", () => {
@@ -48,6 +48,13 @@ describe("fuzzyMatch", () => {
     const tight = fuzzyMatch("config", "config.md")!;
     const loose = fuzzyMatch("config", "c-o-n-f-i-g.md")!;
     expect(tight.score).toBeGreaterThan(loose.score);
+  });
+
+  // A greedy left-to-right scan takes the "c" in "advanced" and loses both the
+  // contiguous run and the word-boundary bonus; fzf finds the whole word.
+  test("prefers a whole word over an earlier stray character", () => {
+    const r = fuzzyMatch("config", "guide/advanced-config.md")!;
+    expect(r.indices).toEqual([15, 16, 17, 18, 19, 20]);
   });
 });
 
@@ -94,6 +101,30 @@ describe("search", () => {
   test("fuzzy filename match returns a file hit", () => {
     const hit = search(dir, "advcfg").find((h) => h.kind === "file");
     expect(hit?.path).toBe("guide/advanced-config.md");
+  });
+
+  test("extended syntax anchors a prefix", () => {
+    expect(search(dir, "^guide").map((h) => h.path)).toEqual(["guide/advanced-config.md"]);
+  });
+
+  test("extended syntax anchors a suffix", () => {
+    expect(search(dir, "config.md$").map((h) => h.path)).toEqual([
+      "guide/advanced-config.md",
+    ]);
+  });
+
+  test("an extended query filters paths only, skipping content", () => {
+    // plain query reaches headings...
+    expect(search(dir, "config").some((h) => h.kind === "heading")).toBe(true);
+    // ...the exact-match form is a path filter, so it does not
+    const ext = search(dir, "'config");
+    expect(ext.length).toBeGreaterThan(0);
+    expect(ext.every((h) => h.kind === "file")).toBe(true);
+  });
+
+  test("a malformed extended query does not throw", () => {
+    expect(() => search(dir, "!")).not.toThrow();
+    expect(() => search(dir, "'")).not.toThrow();
   });
 
   test("match ranges point at the matched substring", () => {

@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, relative as pathRelative, resolve as pathResolve } from "node:path";
+import { Fzf, extendedMatch } from "fzf";
 import { SKIP_DIRS, slugifyHeading } from "./util.ts";
 
 export type HitKind = "file" | "heading" | "text";
@@ -98,47 +99,60 @@ function stripInlineMd(s: string): string {
     .trim();
 }
 
+interface Entry {
+  abs: string;
+  /** Path relative to the base, POSIX-style. */
+  rel: string;
+  name: string;
+}
+
+const positions = (set: Set<number>): number[] => [...set].sort((a, b) => a - b);
+
 /**
- * Greedy subsequence match, scoring contiguity and word-boundary starts.
- * Returns null when `needle` is not a subsequence of `haystack`.
+ * Score a single string against a query with fzf's algorithm.
+ * The search path matches whole lists at once through `Fzf`; this is the
+ * one-candidate form, used by tests and by callers holding a single string.
  */
 export function fuzzyMatch(
   needle: string,
   haystack: string
 ): { score: number; indices: number[] } | null {
-  const n = needle.toLowerCase();
-  const h = haystack.toLowerCase();
-  if (!n) return { score: 0, indices: [] };
+  const [hit] = new Fzf([haystack]).find(needle);
+  return hit ? { score: hit.score, indices: positions(hit.positions) } : null;
+}
 
-  const indices: number[] = [];
-  let score = 0;
-  let hi = 0;
-  let prev = -2;
+/**
+ * True when the query uses fzf's extended syntax — `^prefix`, `suffix$`,
+ * `'exact`, `!negate`, `|`.
+ */
+function isExtendedQuery(q: string): boolean {
+  return q.split(/\s+/).some((t) => t === "|" || /^[\^!']/.test(t) || /\$$/.test(t));
+}
 
-  for (let ni = 0; ni < n.length; ni++) {
-    const ch = n[ni];
-    let found = -1;
-    while (hi < h.length) {
-      if (h[hi] === ch) {
-        found = hi;
-        break;
-      }
-      hi++;
-    }
-    if (found === -1) return null;
-
-    score += 1;
-    if (found === prev + 1) score += 8; // contiguous run
-    const before = found > 0 ? h[found - 1] : "";
-    if (found === 0 || before === "/" || before === "-" || before === "_" || before === ".") {
-      score += 6; // start of a path or word segment
-    }
-    if (found > prev + 1) score -= Math.min(3, (found - prev - 1) * 0.2); // gap
-    indices.push(found);
-    prev = found;
-    hi = found + 1;
+/**
+ * Rank paths with fzf. Ordering (score, then fzf's own tiebreakers) is kept
+ * as returned rather than re-sorted.
+ */
+function matchPaths(entries: Entry[], q: string): SearchHit[] {
+  let results;
+  try {
+    results = new Fzf(entries, {
+      selector: (e: Entry) => e.rel,
+      match: extendedMatch,
+      limit: MAX_FILE_HITS,
+    }).find(q);
+  } catch {
+    return []; // malformed extended query, e.g. a lone quote
   }
-  return { score, indices };
+  return results.map((r) => ({
+    kind: "file" as const,
+    path: r.item.rel,
+    name: r.item.name,
+    line: 0,
+    text: r.item.rel,
+    score: r.score,
+    indices: positions(r.positions),
+  }));
 }
 
 /** Split a query into lowercase terms; every term must be present (AND). */
@@ -182,32 +196,25 @@ function snippet(line: string, at: number, len: number): { text: string; range: 
 export function search(base: string, query: string): SearchHit[] {
   const q = query.trim();
   if (!q) return [];
-  const ts = terms(q);
-  const files = listMdFiles(base);
 
-  const fileHits: SearchHit[] = [];
+  const entries: Entry[] = listMdFiles(base).map((abs) => ({
+    abs,
+    rel: pathRelative(base, abs).split(/[\\/]/).join("/"),
+    name: basename(abs),
+  }));
+
+  const fileHits = matchPaths(entries, q);
+
+  // Extended operators only mean anything against a path. Scanning line
+  // content for the literal operator characters would just add noise, so an
+  // extended query is treated as a path filter and nothing else.
+  if (isExtendedQuery(q)) return fileHits;
+
+  const ts = terms(q);
   const headingHits: SearchHit[] = [];
   const textHits: SearchHit[] = [];
 
-  for (const abs of files) {
-    const rel = pathRelative(base, abs).split(/[\\/]/).join("/");
-    const name = basename(abs);
-
-    const fz = fuzzyMatch(q.replace(/\s+/g, ""), rel);
-    if (fz) {
-      // Matching inside the basename beats matching in the directory prefix.
-      const inName = fz.indices[0] >= rel.length - name.length;
-      fileHits.push({
-        kind: "file",
-        path: rel,
-        name,
-        line: 0,
-        text: rel,
-        score: fz.score + (inName ? 12 : 0),
-        indices: fz.indices,
-      });
-    }
-
+  for (const { abs, rel, name } of entries) {
     const content = readCached(abs);
     if (!content) continue;
 
@@ -272,7 +279,7 @@ export function search(base: string, query: string): SearchHit[] {
     b.score - a.score || a.path.localeCompare(b.path) || a.line - b.line;
 
   return [
-    ...fileHits.sort(byScore).slice(0, MAX_FILE_HITS),
+    ...fileHits,
     ...headingHits.sort(byScore).slice(0, MAX_HEADING_HITS),
     ...textHits.sort(byScore).slice(0, MAX_TEXT_HITS),
   ];
