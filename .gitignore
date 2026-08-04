@@ -1,0 +1,11 @@
+# dependencies
+node_modules/
+
+# build artifacts
+mdweb
+mdweb-darwin-*
+mdweb-linux-*
+
+# os / editor
+.DS_Store
+*.log
