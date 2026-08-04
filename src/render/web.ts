@@ -426,27 +426,35 @@ function htmlTemplate(
     transition: transform .15s ease;
   }
 
-  /* Slim overlay-style scrollbars for the app chrome: the gutter is always
-     reserved so nothing reflows, but the thumb only appears on hover. */
-  .mdrfc-scroll {
+  /* Slim scrollbars, shared geometry. The document thumb stays visible; the
+     app chrome (.mdrfc-scroll) reveals its thumb on hover. Both reserve the
+     gutter so nothing reflows. */
+  html, .mdrfc-scroll {
     scrollbar-width: thin;
-    scrollbar-color: transparent transparent;
     scrollbar-gutter: stable;
   }
+  html { scrollbar-color: var(--scroll-thumb) transparent; }
+  .mdrfc-scroll { scrollbar-color: transparent transparent; }
   .mdrfc-scroll:hover, .mdrfc-scroll:focus-within {
     scrollbar-color: var(--scroll-thumb) transparent;
   }
+  html::-webkit-scrollbar,
   .mdrfc-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+  html::-webkit-scrollbar-track,
   .mdrfc-scroll::-webkit-scrollbar-track { background: transparent; }
+  html::-webkit-scrollbar-thumb,
   .mdrfc-scroll::-webkit-scrollbar-thumb {
-    background-color: transparent;
     border: 3px solid transparent;
     background-clip: content-box;
     border-radius: 999px;
     transition: background-color .15s;
   }
+  html::-webkit-scrollbar-thumb { background-color: var(--scroll-thumb); }
+  .mdrfc-scroll::-webkit-scrollbar-thumb { background-color: transparent; }
   .mdrfc-scroll:hover::-webkit-scrollbar-thumb { background-color: var(--scroll-thumb); }
+  html::-webkit-scrollbar-thumb:hover,
   .mdrfc-scroll::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-thumb-hover); }
+  html::-webkit-scrollbar-corner,
   .mdrfc-scroll::-webkit-scrollbar-corner { background: transparent; }
   body.mdrfc-has-sidebar { padding-left: var(--sidebar-w); }
   html.mdrfc-sidebar-collapsed .mdrfc-sidebar { transform: translateX(-100%); }
