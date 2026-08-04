@@ -1,19 +1,19 @@
 {
-  "name": "mdweb",
+  "name": "mdrfc",
   "version": "0.1.0",
   "description": "Simple markdown viewer — terminal + web. RFC-style monospace, 72-col width.",
   "type": "module",
   "bin": {
-    "mdweb": "src/main.ts"
+    "mdrfc": "src/main.ts"
   },
   "scripts": {
     "dev": "bun src/main.ts",
     "start": "bun src/main.ts",
-    "build": "bun build --compile src/main.ts --outfile mdweb && node scripts/postbuild.mjs mdweb",
-    "build:macos-arm64": "bun build --compile --target=bun-darwin-arm64 src/main.ts --outfile mdweb-darwin-arm64 && node scripts/postbuild.mjs mdweb-darwin-arm64",
-    "build:macos-x64": "bun build --compile --target=bun-darwin-x64 src/main.ts --outfile mdweb-darwin-x64 && node scripts/postbuild.mjs mdweb-darwin-x64",
-    "build:linux-arm64": "bun build --compile --target=bun-linux-arm64 src/main.ts --outfile mdweb-linux-arm64",
-    "build:linux-x64": "bun build --compile --target=bun-linux-x64 src/main.ts --outfile mdweb-linux-x64",
+    "build": "bun build --compile src/main.ts --outfile mdrfc && node scripts/postbuild.mjs mdrfc",
+    "build:macos-arm64": "bun build --compile --target=bun-darwin-arm64 src/main.ts --outfile mdrfc-darwin-arm64 && node scripts/postbuild.mjs mdrfc-darwin-arm64",
+    "build:macos-x64": "bun build --compile --target=bun-darwin-x64 src/main.ts --outfile mdrfc-darwin-x64 && node scripts/postbuild.mjs mdrfc-darwin-x64",
+    "build:linux-arm64": "bun build --compile --target=bun-linux-arm64 src/main.ts --outfile mdrfc-linux-arm64",
+    "build:linux-x64": "bun build --compile --target=bun-linux-x64 src/main.ts --outfile mdrfc-linux-x64",
     "link": "bun link"
   },
   "dependencies": {

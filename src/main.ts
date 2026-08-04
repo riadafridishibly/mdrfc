@@ -10,7 +10,7 @@ import {
   type Theme,
 } from "./util.ts";
 
-const VERSION = "mdweb 0.1.0";
+const VERSION = "mdrfc 0.1.0";
 
 function printHelp(): void {
   console.log(`
@@ -18,10 +18,10 @@ ${VERSION}
 Simple markdown viewer — terminal + web. RFC-style monospace.
 
 USAGE
-  mdweb [file]              render file to terminal (paged via less)
-  mdweb [file] --web        serve rendered HTML and open browser
-  mdweb                     read markdown from stdin
-  cat foo.md | mdweb --web  stdin + web
+  mdrfc [file]              render file to terminal (paged via less)
+  mdrfc [file] --web        serve rendered HTML and open browser
+  mdrfc                     read markdown from stdin
+  cat foo.md | mdrfc --web  stdin + web
 
 FLAGS
   -w, --web                 serve via local HTTP server
@@ -34,10 +34,10 @@ FLAGS
   -V, --version             show version
 
 EXAMPLES
-  mdweb README.md
-  mdweb README.md --web --port 8080
-  mdweb README.md --web --no-open
-  curl -sL example.com/x.md | mdweb
+  mdrfc README.md
+  mdrfc README.md --web --port 8080
+  mdrfc README.md --web --no-open
+  curl -sL example.com/x.md | mdrfc
 
 WIDTH & RFC STYLE
   Default width is ${RFC_WIDTH} columns (RFC line-length convention).
@@ -78,7 +78,7 @@ async function main() {
     : await readStdin();
 
   if (!content.trim()) {
-    console.error("mdweb: no input (provide a file or pipe markdown via stdin)");
+    console.error("mdrfc: no input (provide a file or pipe markdown via stdin)");
     process.exit(1);
   }
 
@@ -109,6 +109,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(`mdweb: ${err?.message ?? err}`);
+  console.error(`mdrfc: ${err?.message ?? err}`);
   process.exit(1);
 });

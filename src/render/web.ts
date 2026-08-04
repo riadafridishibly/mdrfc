@@ -89,7 +89,7 @@ function htmlTemplate(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mdweb</title>
+<title>mdrfc</title>
 <style>
   :root {
     --font-size: 14px;
@@ -166,7 +166,7 @@ function htmlTemplate(
   img { max-width: 100%; }
 
   /* ── settings panel ─────────────────────────────────────────── */
-  #mdweb-gear {
+  #mdrfc-gear {
     position: fixed; top: 12px; right: 12px; z-index: 50;
     width: 34px; height: 34px; border-radius: 6px;
     border: 1px solid var(--border); background: var(--code-bg); color: var(--fg);
@@ -174,8 +174,8 @@ function htmlTemplate(
     display: flex; align-items: center; justify-content: center;
     opacity: .55; transition: opacity .15s;
   }
-  #mdweb-gear:hover { opacity: 1; }
-  #mdweb-panel {
+  #mdrfc-gear:hover { opacity: 1; }
+  #mdrfc-panel {
     position: fixed; top: 0; right: 0; height: 100vh; width: 280px;
     background: var(--bg); border-left: 1px solid var(--border);
     box-shadow: -4px 0 18px rgba(0,0,0,.10);
@@ -183,25 +183,25 @@ function htmlTemplate(
     z-index: 60; padding: 18px 16px; box-sizing: border-box; overflow-y: auto;
     font-size: 13px;
   }
-  #mdweb-panel.open { transform: translateX(0); }
-  #mdweb-panel h2 { margin: 0 0 14px; font-size: 14px; border: 0; padding: 0; }
-  #mdweb-panel .row { margin-bottom: 14px; }
-  #mdweb-panel label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
-  #mdweb-panel select,
-  #mdweb-panel input[type=text],
-  #mdweb-panel input[type=number] {
+  #mdrfc-panel.open { transform: translateX(0); }
+  #mdrfc-panel h2 { margin: 0 0 14px; font-size: 14px; border: 0; padding: 0; }
+  #mdrfc-panel .row { margin-bottom: 14px; }
+  #mdrfc-panel label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
+  #mdrfc-panel select,
+  #mdrfc-panel input[type=text],
+  #mdrfc-panel input[type=number] {
     width: 100%; box-sizing: border-box; font-family: inherit; font-size: 13px;
     background: var(--bg); color: var(--fg); border: 1px solid var(--border);
     border-radius: 4px; padding: 5px 6px;
   }
-  #mdweb-panel .size-row { display: flex; gap: 8px; align-items: center; }
-  #mdweb-panel input[type=range] { flex: 1; }
-  #mdweb-panel .close {
+  #mdrfc-panel .size-row { display: flex; gap: 8px; align-items: center; }
+  #mdrfc-panel input[type=range] { flex: 1; }
+  #mdrfc-panel .close {
     position: absolute; top: 8px; right: 10px;
     background: none; border: 0; color: var(--muted); font-size: 20px;
     cursor: pointer; line-height: 1;
   }
-  #mdweb-panel button.act {
+  #mdrfc-panel button.act {
     width: 100%; padding: 7px; border: 1px solid var(--border);
     background: var(--code-bg); color: var(--fg); border-radius: 4px;
     cursor: pointer; font-family: inherit; font-size: 13px;
@@ -213,54 +213,54 @@ function htmlTemplate(
 ${body}
 </main>
 
-<button id="mdweb-gear" type="button" title="Settings" aria-label="Settings">&#9881;</button>
-<div id="mdweb-panel" role="dialog" aria-label="Settings" aria-hidden="true">
-  <button type="button" class="close" id="mdweb-close" aria-label="Close">&times;</button>
+<button id="mdrfc-gear" type="button" title="Settings" aria-label="Settings">&#9881;</button>
+<div id="mdrfc-panel" role="dialog" aria-label="Settings" aria-hidden="true">
+  <button type="button" class="close" id="mdrfc-close" aria-label="Close">&times;</button>
   <h2>Settings</h2>
   <div class="row">
-    <label for="mdweb-theme">Theme</label>
-    <select id="mdweb-theme">
+    <label for="mdrfc-theme">Theme</label>
+    <select id="mdrfc-theme">
       <option value="auto">Auto (follow OS)</option>
       <option value="light">Light</option>
       <option value="dark">Dark</option>
     </select>
   </div>
   <div class="row">
-    <label for="mdweb-font">Font</label>
-    <select id="mdweb-font"></select>
+    <label for="mdrfc-font">Font</label>
+    <select id="mdrfc-font"></select>
   </div>
   <div class="row">
-    <label for="mdweb-font-custom">Custom font name</label>
-    <input id="mdweb-font-custom" type="text" placeholder="e.g. Comic Sans MS" spellcheck="false">
+    <label for="mdrfc-font-custom">Custom font name</label>
+    <input id="mdrfc-font-custom" type="text" placeholder="e.g. Comic Sans MS" spellcheck="false">
   </div>
   <div class="row">
-    <label for="mdweb-size">Font size <span id="mdweb-size-val"></span></label>
+    <label for="mdrfc-size">Font size <span id="mdrfc-size-val"></span></label>
     <div class="size-row">
-      <input id="mdweb-size" type="range" min="10" max="28" step="1" value="14">
-      <input id="mdweb-size-num" type="number" min="10" max="28" step="1" value="14" style="width:58px">
+      <input id="mdrfc-size" type="range" min="10" max="28" step="1" value="14">
+      <input id="mdrfc-size-num" type="number" min="10" max="28" step="1" value="14" style="width:58px">
     </div>
   </div>
   <div class="row">
-    <button type="button" class="act" id="mdweb-reset">Reset to defaults</button>
+    <button type="button" class="act" id="mdrfc-reset">Reset to defaults</button>
   </div>
 </div>
 
 ${reloadScript}
 <script>
 (function(){
-  var K = "mdweb.";
+  var K = "mdrfc.";
   var SERV_THEME = ${JSON.stringify(theme)};
   var root = document.documentElement;
-  var gear = document.getElementById("mdweb-gear");
-  var panel = document.getElementById("mdweb-panel");
-  var closeBtn = document.getElementById("mdweb-close");
-  var themeSel = document.getElementById("mdweb-theme");
-  var fontSel = document.getElementById("mdweb-font");
-  var fontCustom = document.getElementById("mdweb-font-custom");
-  var sizeRange = document.getElementById("mdweb-size");
-  var sizeNum = document.getElementById("mdweb-size-num");
-  var sizeVal = document.getElementById("mdweb-size-val");
-  var resetBtn = document.getElementById("mdweb-reset");
+  var gear = document.getElementById("mdrfc-gear");
+  var panel = document.getElementById("mdrfc-panel");
+  var closeBtn = document.getElementById("mdrfc-close");
+  var themeSel = document.getElementById("mdrfc-theme");
+  var fontSel = document.getElementById("mdrfc-font");
+  var fontCustom = document.getElementById("mdrfc-font-custom");
+  var sizeRange = document.getElementById("mdrfc-size");
+  var sizeNum = document.getElementById("mdrfc-size-num");
+  var sizeVal = document.getElementById("mdrfc-size-val");
+  var resetBtn = document.getElementById("mdrfc-reset");
 
   function rd(k, d){ try{ var v = localStorage.getItem(K+k); return v==null?d:v; }catch(e){ return d; } }
   function wr(k, v){ try{ localStorage.setItem(K+k, v); }catch(e){} }

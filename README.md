@@ -1,16 +1,16 @@
-# mdweb
+# mdrfc
 
 Simple markdown viewer. **Terminal + web.** RFC-style monospace, 72-column width.
 
 ```
-mdweb README.md              # render in terminal (paged via less)
-mdweb README.md --web        # serve HTML, open browser, live-reload on edit
-cat foo.md | mdweb           # stdin works too
+mdrfc README.md              # render in terminal (paged via less)
+mdrfc README.md --web        # serve HTML, open browser, live-reload on edit
+cat foo.md | mdrfc           # stdin works too
 ```
 
 ## Why
 
-Markdown is for *reading*, not just rendering to HTML. mdweb gives you two fast paths from the same source:
+Markdown is for *reading*, not just rendering to HTML. mdrfc gives you two fast paths from the same source:
 
 - **Terminal** — RFC-text feel, monospace, 72-col reflow, optional color, paged through `less`.
 - **Web** — same 72ch column, same monospace, but proper HTML: real links, tables, syntax-highlighted code blocks, dark/light theme. With **live reload** so editing the file refreshes the browser instantly.
@@ -24,12 +24,12 @@ Requires [Bun](https://bun.sh) ≥ 1.1.
 bun install
 bun src/main.ts README.md
 
-# global link (so `mdweb` works anywhere)
+# global link (so `mdrfc` works anywhere)
 bun link
 
 # or build a standalone binary (~60 MB, self-contained, no Bun needed)
 bun run build
-./mdweb README.md
+./mdrfc README.md
 ```
 
 > On macOS the build step ad-hoc codesigns the binary so it isn't killed by Gatekeeper on first run.
@@ -37,10 +37,10 @@ bun run build
 ## Usage
 
 ```
-mdweb [file]              render file to terminal (paged via less)
-mdweb [file] --web        serve rendered HTML and open browser
-mdweb                     read markdown from stdin
-cat foo.md | mdweb --web  stdin + web
+mdrfc [file]              render file to terminal (paged via less)
+mdrfc [file] --web        serve rendered HTML and open browser
+mdrfc                     read markdown from stdin
+cat foo.md | mdrfc --web  stdin + web
 
 FLAGS
   -w, --web                 serve via local HTTP server
@@ -57,12 +57,12 @@ FLAGS
 
 Default width is **72 columns**, the long-standing RFC line-length convention. Both the terminal and web views share it.
 
-- Override per-run: `mdweb README.md --width 80`
-- Pure plain-text RFC look (no color): `mdweb README.md --no-color`
+- Override per-run: `mdrfc README.md --width 80`
+- Pure plain-text RFC look (no color): `mdrfc README.md --no-color`
 
 ## Live reload
 
-With `--web` and a **file** (not stdin), mdweb watches the file. On every save:
+With `--web` and a **file** (not stdin), mdrfc watches the file. On every save:
 
 1. File is re-read.
 2. All connected browser tabs get a WebSocket `reload` ping and refresh.
@@ -78,7 +78,7 @@ bun run build:linux-arm64
 bun run build:linux-x64
 ```
 
-Each produces a standalone executable named `mdweb-<os>-<arch>`.
+Each produces a standalone executable named `mdrfc-<os>-<arch>`.
 
 ## Layout
 

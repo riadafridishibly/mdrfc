@@ -124,7 +124,7 @@ export async function startServer(opts: ServerOpts): Promise<void> {
 
   const fileLabel = opts.source ? ` ${opts.source}` : " (stdin)";
   const reloadLabel = opts.source ? " · live-reload on" : "";
-  console.error(`mdweb serving${fileLabel} at ${url}${reloadLabel}`);
+  console.error(`mdrfc serving${fileLabel} at ${url}${reloadLabel}`);
   console.error(`press Ctrl-C to stop`);
 
   if (opts.open) openBrowser(url);
