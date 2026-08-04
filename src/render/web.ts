@@ -12,7 +12,7 @@ export function renderWeb(
   reloadToken?: string
 ): string {
   const marked = new Marked();
-  const body = marked.parse(md) as string;
+  const body = addHeadingIds(marked.parse(md) as string);
   const theme = opts.theme;
   return htmlTemplate(openExternalLinksInNewTab(body), opts.width, theme, reloadToken);
 }
@@ -23,6 +23,36 @@ export function renderWeb(
  * Only affects http(s) and protocol-relative URLs; anchors and relative
  * links are left untouched.
  */
+/**
+ * Add `id="<slug>"` to every <h1>..<h6> so anchor links (`#section`)
+ * actually scroll. marked core doesn't emit heading IDs.
+ * Slug: lowercase, trim, collapse spaces/punct to hyphens, dedupe.
+ */
+function addHeadingIds(html: string): string {
+  const seen = new Map<string, number>();
+  const slugify = (text: string): string =>
+    text
+      .replace(/<[^>]+>/g, "") // strip inline tags
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, "") // drop punctuation
+      .trim()
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      || "section";
+  const uniqueSlug = (slug: string): string => {
+    const n = seen.get(slug) ?? 0;
+    seen.set(slug, n + 1);
+    return n === 0 ? slug : `${slug}-${n}`;
+  };
+  return html.replace(
+    /<h([1-6])>([\s\S]*?)<\/h\1>/g,
+    (_m, level: string, inner: string) => {
+      const id = uniqueSlug(slugify(inner));
+      return `<h${level} id="${id}">${inner}</h${level}>`;
+    }
+  );
+}
+
 function openExternalLinksInNewTab(html: string): string {
   return html.replace(
     new RegExp('<a href="((?:https?:)?//[^"]*)"', "g"),
