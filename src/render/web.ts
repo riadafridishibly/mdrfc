@@ -239,6 +239,57 @@ function htmlTemplate(
 })();
 </script>`;
 
+  // Where each document was left, keyed by path for the browsing session.
+  // Reading half of something long and coming back to it — through a live
+  // reload, the sidebar, or the back button — used to start over at the top.
+  // Sits alongside the sidebar's own remembered scroll.
+  const scrollScript = `<script>
+(function(){
+  var KEY = "mdrfc.scroll:";
+  var HANDOFF = "mdrfc.pendingHit";  // the palette's, read by the highlighter
+  function path(url){ return new URL(url || location.href, location.href).pathname; }
+  function rd(k){ try{ return sessionStorage.getItem(k); }catch(e){ return null; } }
+  function wr(k, v){ try{ sessionStorage.setItem(k, v); }catch(e){} }
+
+  var lastSet = -1;
+
+  function save(url){ wr(KEY + path(url), String(Math.round(window.scrollY))); }
+
+  // A hash and a pending search hit are both destinations the reader just
+  // asked for, so neither gives way to where this document was last left.
+  // Returns whether the caller's own fallback is still needed.
+  function restore(url){
+    if(new URL(url || location.href, location.href).hash) return false;
+    if(rd(HANDOFF)) return false;
+    var y = parseInt(rd(KEY + path(url)), 10);
+    if(!y) return false;
+    lastSet = y;
+    window.scrollTo(0, y);
+    return true;
+  }
+  window.mdrfcScroll = { save: save, restore: restore };
+
+  // Left to itself the browser restores from a height it measured before the
+  // stored font size and column width were applied, landing in the wrong place.
+  try { if("scrollRestoration" in history) history.scrollRestoration = "manual"; } catch(e){}
+
+  var pending = 0, touched = false;
+  window.addEventListener("scroll", function(){
+    if(Math.abs(window.scrollY - lastSet) > 2) touched = true;
+    if(pending) return;
+    pending = requestAnimationFrame(function(){ pending = 0; save(); });
+  }, { passive: true });
+  // The frame the throttle is waiting on never runs if the tab goes away first.
+  window.addEventListener("pagehide", function(){ save(); });
+
+  restore();
+  // Images and a webfont land after this runs and move the offset out from
+  // under it. Repeat once everything has settled — unless the reader has
+  // meanwhile scrolled somewhere of their own choosing.
+  window.addEventListener("load", function(){ if(!touched) restore(); });
+})();
+</script>`;
+
   // Sidebar behaviour: collapse, drag-resize, and persisted tree state.
   // Navigation swaps <main> in place instead of reloading, so the tree's
   // scroll position and folder open/closed state survive a click.
@@ -352,12 +403,13 @@ function htmlTemplate(
     var hash = new URL(url, location.href).hash;
     var target = hash ? document.getElementById(decodeURIComponent(hash.slice(1))) : null;
     if(target) target.scrollIntoView();
-    else window.scrollTo(0, 0);
+    else if(!window.mdrfcScroll.restore(url)) window.scrollTo(0, 0);
   }
   // Exposed so the command palette can reuse in-place navigation. Resolves
   // once the new document is in the DOM, which is when the palette paints its
   // search hits over it.
   window.mdrfcNavigate = function(url){
+    window.mdrfcScroll.save();   // before the address changes under the key
     return fetch(url).then(function(r){ return r.text(); }).then(function(html){
       history.pushState({ mdrfc: 1 }, "", url);
       swap(html, url);
@@ -1158,6 +1210,7 @@ ${reloadScript}
   }
 })();
 </script>
+${scrollScript}
 ${sidebarScript}
 </body>
 </html>`;

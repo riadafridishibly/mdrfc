@@ -135,6 +135,17 @@ The handle draws its `#` from CSS rather than holding text, so heading text
 stays exactly what the markdown said — which is what the page title and the
 search highlighter read.
 
+## Reading position
+
+The web view remembers where you were in each document, per path, for the
+browsing session. Save the file and live-reload puts you back at the same
+line; wander off to another file in the sidebar and come back, and it is
+still where you left it.
+
+Anything you asked for explicitly outranks it — a `#fragment` in the URL, or
+a result opened from the palette — so the memory only decides where a plain
+visit lands.
+
 ## Search
 
 In `--web` mode, **Cmd-K** (or Ctrl-K) opens a command palette.
