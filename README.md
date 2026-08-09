@@ -149,6 +149,17 @@ its extended syntax works:
 These operators only apply to paths, so a query using any of them filters files
 and skips content search.
 
+Opening a result highlights the line you picked — the whole line, as the
+palette listed it — with your query brighter inside it, and its other
+occurrences in the document faintly marked. No hunting down the line by eye.
+**Esc** clears the highlight.
+
+The listed row is markdown and the page is rendered HTML, so the two are
+matched with markup stripped and the hit's own section preferred; a row nothing
+can be matched to still highlights the heading it belongs under. Highlighting
+uses the CSS Custom Highlight API, so the markup is untouched — a browser
+without it still jumps, just without the colour.
+
 ## Settings panel
 
 The gear button in the web view opens theme, font and size controls, all
@@ -202,6 +213,7 @@ src/
   server.ts        Bun.serve + WebSocket live-reload + file watcher + md tree
   client/
     palette.js     Cmd-K command palette (Preact + htm, served as a module)
+    highlight.js   paints the picked line + query in the document (Highlight API)
   render/
     term.ts        marked + marked-terminal renderer; dir-mode tree
     web.ts         marked HTML + CSS template + sidebar filetree

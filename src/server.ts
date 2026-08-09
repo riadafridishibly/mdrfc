@@ -14,6 +14,7 @@ import { isExtendedQuery, search } from "./search.ts";
 import type { RenderOpts } from "./util.ts";
 import preactSrc from "htm/preact/standalone.module.js" with { type: "text" };
 import paletteSrc from "./client/palette.js" with { type: "text" };
+import highlightSrc from "./client/highlight.js" with { type: "text" };
 
 export interface ServerOpts extends RenderOpts {
   content: string;
@@ -180,8 +181,16 @@ export async function startServer(opts: ServerOpts): Promise<void> {
       // that only refetches the document, so these are not requested again.
       // Never cached: a viewer that live-reloads must not keep serving a stale
       // script after the binary it came from has changed underneath it.
-      if (u.pathname === "/_preact.js" || u.pathname === "/_palette.js") {
-        return new Response(u.pathname === "/_preact.js" ? preactSrc : paletteSrc, {
+      const clientModule =
+        u.pathname === "/_preact.js"
+          ? preactSrc
+          : u.pathname === "/_palette.js"
+            ? paletteSrc
+            : u.pathname === "/_highlight.js"
+              ? highlightSrc
+              : null;
+      if (clientModule !== null) {
+        return new Response(clientModule, {
           headers: {
             "content-type": "text/javascript; charset=utf-8",
             "cache-control": "no-store",

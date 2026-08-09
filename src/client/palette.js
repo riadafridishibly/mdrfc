@@ -1,4 +1,10 @@
 import { html, render, useState, useEffect, useRef, useCallback } from "/_preact.js";
+import {
+  clearHighlights,
+  highlightMatches,
+  rememberHighlight,
+  resumeHighlight,
+} from "/_highlight.js";
 
 const CFG = window.__mdrfc || {};
 const GROUP = { local: "This document", file: "Files", heading: "Headings", text: "Content" };
@@ -162,6 +168,16 @@ function Palette() {
     if (open) inputRef.current?.focus();
   }, [open]);
 
+  // Escape on the document — the palette's own Escape never reaches here —
+  // dismisses the paint left behind by the last jump.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") clearHighlights();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
   // ── server-side content search (directory mode only) ─────────
   useEffect(() => {
     if (!open || !CFG.dirMode || !query.trim()) {
@@ -201,20 +217,34 @@ function Palette() {
     listRef.current?.querySelector(".mdrfc-p-row.active")?.scrollIntoView({ block: "nearest" });
   }, [sel, hits.length]);
 
+  // Landing on a section is not the same as finding the words: every jump
+  // paints the query where it occurs and marks the occurrence jumped to.
   const pick = useCallback(
     (hit) => {
       if (!hit) return;
       setOpen(false);
+      // `snippet` is the row as listed; a file row lists a path, which is not
+      // a line of any document and so cannot be pointed at.
+      const paint = { query, anchor: hit.anchor, snippet: hit.kind === "file" ? null : hit.text };
       if (hit.kind === "local") {
         history.replaceState(null, "", "#" + hit.anchor);
         document.getElementById(hit.anchor)?.scrollIntoView();
+        highlightMatches(query, paint);
         return;
       }
       const url = "/" + encodeURI(hit.path).replace(/#/g, "%23") + (hit.anchor ? "#" + hit.anchor : "");
-      if (window.mdrfcNavigate) window.mdrfcNavigate(url);
-      else location.href = url;
+      clearHighlights();
+      if (window.mdrfcNavigate) {
+        Promise.resolve(window.mdrfcNavigate(url))
+          .then(() => highlightMatches(query, paint))
+          .catch(() => {});
+      } else {
+        // full page load: the next document picks the highlight up on boot
+        rememberHighlight({ ...paint, path: new URL(url, location.href).pathname });
+        location.href = url;
+      }
     },
-    []
+    [query]
   );
 
   const onKeyDown = (e) => {
@@ -295,3 +325,8 @@ function Palette() {
 const root = document.createElement("div");
 document.body.appendChild(root);
 render(html`<${Palette} />`, root);
+
+resumeHighlight();
+// Back/forward swaps <main>, which leaves the painted ranges pointing at nodes
+// no longer in the document.
+window.addEventListener("popstate", clearHighlights);

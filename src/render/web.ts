@@ -344,9 +344,11 @@ function htmlTemplate(
     if(target) target.scrollIntoView();
     else window.scrollTo(0, 0);
   }
-  // exposed so the command palette can reuse in-place navigation
+  // Exposed so the command palette can reuse in-place navigation. Resolves
+  // once the new document is in the DOM, which is when the palette paints its
+  // search hits over it.
   window.mdrfcNavigate = function(url){
-    fetch(url).then(function(r){ return r.text(); }).then(function(html){
+    return fetch(url).then(function(r){ return r.text(); }).then(function(html){
       history.pushState({ mdrfc: 1 }, "", url);
       swap(html, url);
       if(isNarrow()) setCollapsed(true, false);
@@ -391,6 +393,11 @@ function htmlTemplate(
     --link: #2563eb;
     --scroll-thumb: rgba(0,0,0,.22);
     --scroll-thumb-hover: rgba(0,0,0,.38);
+    --hit-bg: #fff4b8;
+    --hit-fg: #1a1a1a;
+    --hit-line-bg: #ffe9a3;
+    --hit-cur-bg: #ffc107;
+    --hit-cur-fg: #1a1a1a;
   }
   html[data-theme="light"] { color-scheme: light; }
   html[data-theme="dark"] {
@@ -399,6 +406,9 @@ function htmlTemplate(
     --code-bg: #2a2a2a; --link: #6cb6ff;
     --scroll-thumb: rgba(255,255,255,.20);
     --scroll-thumb-hover: rgba(255,255,255,.34);
+    --hit-bg: #3d3200; --hit-fg: #ffe9a3;
+    --hit-line-bg: #55450a;
+    --hit-cur-bg: #b98900; --hit-cur-fg: #1a1a1a;
   }
   /* auto: follow OS, unless user forced light */
   @media (prefers-color-scheme: dark) {
@@ -408,7 +418,18 @@ function htmlTemplate(
       --code-bg: #2a2a2a; --link: #6cb6ff;
       --scroll-thumb: rgba(255,255,255,.20);
       --scroll-thumb-hover: rgba(255,255,255,.34);
+      --hit-bg: #4a3d00; --hit-fg: #ffe9a3;
+      --hit-cur-bg: #b98900; --hit-cur-fg: #1a1a1a;
     }
+  }
+
+  /* ── search hits, painted after a palette jump (Custom Highlight API) ──
+     The picked row is banded whole, its query terms brighter inside it; the
+     same terms elsewhere in the document stay faint. */
+  ::highlight(mdrfc-hit-line) { background-color: var(--hit-line-bg); color: var(--hit-fg); }
+  ::highlight(mdrfc-hit) { background-color: var(--hit-bg); color: var(--hit-fg); }
+  ::highlight(mdrfc-hit-current) {
+    background-color: var(--hit-cur-bg); color: var(--hit-cur-fg);
   }
   body {
     background: var(--bg);

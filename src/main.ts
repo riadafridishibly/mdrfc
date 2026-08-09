@@ -50,6 +50,8 @@ SEARCH (--web)
   and body text, jumping to the nearest heading. Filenames are ranked with
   fzf, so ^starts, ends$, 'exact, !omit and a|b work — these apply to paths
   only, so such a query filters files and skips content search.
+  Opening a result highlights the line it listed, the query brighter within
+  it and its other occurrences faintly; Esc clears the highlight.
 
 DIRECTORY MODE
   Passing a directory instead of a file scans it for *.md files (hidden
