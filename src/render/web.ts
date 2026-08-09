@@ -68,8 +68,8 @@ function renderFrontmatterHtml(data: Record<string, FmValue>): string {
  * Frontmatter is stripped from the body, shown as a metadata block (unless
  * disabled) and its `title` becomes the document title.
  * Injects a tiny WebSocket client for live-reload when `reloadToken` is set,
- * and a settings panel (theme / searchable font picker / size) persisted in
- * localStorage.
+ * and a settings panel (theme / searchable font picker / size / content width)
+ * persisted in localStorage.
  * `tree` (directory mode) adds a fixed sidebar listing every .md file.
  */
 export function renderWeb(
@@ -207,23 +207,27 @@ function htmlTemplate(
   const htmlThemeAttr =
     theme === "light" || theme === "dark" ? ` data-theme="${theme}"` : "";
 
-  // Runs before first paint so the sidebar never flashes at the wrong
-  // width or slides in from collapsed on every navigation.
-  const sidebarBootScript = sidebar
-    ? `<script>
-(function(){
-  try {
-    var root = document.documentElement;
+  // Runs before first paint so the content column never reflows, and the
+  // sidebar never flashes at the wrong width or slides in from collapsed on
+  // every navigation.
+  const sidebarBoot = sidebar
+    ? `
     var w = localStorage.getItem("mdrfc.sidebarW");
     if(w) root.style.setProperty("--sidebar-w", parseInt(w,10)+"px");
     var collapsed = localStorage.getItem("mdrfc.sidebarCollapsed") === "1";
     // narrow screens start collapsed regardless of the desktop preference
     if(window.matchMedia("(max-width: 720px)").matches) collapsed = true;
-    if(collapsed) root.classList.add("mdrfc-sidebar-collapsed");
+    if(collapsed) root.classList.add("mdrfc-sidebar-collapsed");`
+    : "";
+  const bootScript = `<script>
+(function(){
+  try {
+    var root = document.documentElement;
+    var cw = parseInt(localStorage.getItem("mdrfc.width"), 10);
+    if(cw) root.style.setProperty("--content-w", cw+"ch");${sidebarBoot}
   } catch(e){}
 })();
-</script>`
-    : "";
+</script>`;
 
   // Sidebar behaviour: collapse, drag-resize, and persisted tree state.
   // Navigation swaps <main> in place instead of reloading, so the tree's
@@ -377,6 +381,7 @@ function htmlTemplate(
 <style>
   :root {
     --font-size: 14px;
+    --content-w: ${width}ch;
     --sidebar-w: 248px;
     --bg: #ffffff;
     --fg: #1a1a1a;
@@ -417,7 +422,7 @@ function htmlTemplate(
     -webkit-font-smoothing: antialiased;
   }
   main {
-    max-width: ${width}ch;
+    max-width: var(--content-w);
     margin: 0 auto;
   }
   h1, h2, h3, h4, h5, h6 { line-height: 1.25; margin: 1.5em 0 0.5em; scroll-margin-top: 1rem; }
@@ -711,7 +716,7 @@ function htmlTemplate(
     padding: 0 4px; margin-right: 3px;
   }
 </style>
-${sidebarBootScript}
+${bootScript}
 </head>
 <body${sidebar ? ' class="mdrfc-has-sidebar"' : ""}>
 ${sidebar}<main>
@@ -745,6 +750,13 @@ ${body}
     </div>
   </div>
   <div class="row">
+    <label for="mdrfc-width">Content width <span id="mdrfc-width-val"></span></label>
+    <div class="size-row">
+      <input id="mdrfc-width" type="range" min="40" max="200" step="1" value="${width}">
+      <input id="mdrfc-width-num" type="number" min="40" max="200" step="1" value="${width}" style="width:58px">
+    </div>
+  </div>
+  <div class="row">
     <button type="button" class="act" id="mdrfc-reset">Reset to defaults</button>
   </div>
 </div>
@@ -756,6 +768,7 @@ ${reloadScript}
 (function(){
   var K = "mdrfc.";
   var SERV_THEME = ${JSON.stringify(theme)};
+  var SERV_WIDTH = ${width};
   var root = document.documentElement;
   var gear = document.getElementById("mdrfc-gear");
   var panel = document.getElementById("mdrfc-panel");
@@ -767,6 +780,9 @@ ${reloadScript}
   var sizeRange = document.getElementById("mdrfc-size");
   var sizeNum = document.getElementById("mdrfc-size-num");
   var sizeVal = document.getElementById("mdrfc-size-val");
+  var widthRange = document.getElementById("mdrfc-width");
+  var widthNum = document.getElementById("mdrfc-width-num");
+  var widthVal = document.getElementById("mdrfc-width-val");
   var resetBtn = document.getElementById("mdrfc-reset");
 
   function rd(k, d){ try{ var v = localStorage.getItem(K+k); return v==null?d:v; }catch(e){ return d; } }
@@ -788,6 +804,19 @@ ${reloadScript}
     sizeRange.value = s || 14;
     sizeNum.value = s || 14;
   }
+  function applyWidth(w){
+    if(!w){ root.style.removeProperty("--content-w"); widthVal.textContent = ""; }
+    else { root.style.setProperty("--content-w", w+"ch"); widthVal.textContent = "("+w+" cols)"; }
+  }
+  // The server's --width is the default: landing back on it clears the override
+  // instead of pinning the column to whatever this run happened to start with.
+  function setWidth(w, syncNum){
+    w = Math.min(200, Math.max(40, w));
+    widthRange.value = w;
+    if(syncNum) widthNum.value = w;
+    if(w === SERV_WIDTH){ rm("width"); applyWidth(""); }
+    else { applyWidth(w); wr("width", String(w)); }
+  }
 
   // init
   var t = rd("theme", SERV_THEME || "auto");
@@ -800,6 +829,11 @@ ${reloadScript}
 
   var s = rd("size", "");
   if(s) applySize(s); else { sizeRange.value = 14; sizeNum.value = 14; }
+
+  var cw = parseInt(rd("width", ""), 10) || SERV_WIDTH;
+  widthRange.value = cw;
+  widthNum.value = cw;
+  if(cw !== SERV_WIDTH) applyWidth(cw);
 
   // events
   themeSel.addEventListener("change", function(){
@@ -827,8 +861,20 @@ ${reloadScript}
     if(v && v!=="14"){ applySize(v); wr("size", String(v)); }
     else { rm("size"); applySize(""); }
   });
+  widthRange.addEventListener("input", function(){
+    setWidth(parseInt(widthRange.value, 10), true);
+  });
+  // A partial or out-of-range typed value waits for blur rather than being
+  // clamped mid-keystroke.
+  widthNum.addEventListener("input", function(){
+    var v = parseInt(widthNum.value, 10);
+    if(v >= 40 && v <= 200) setWidth(v, false);
+  });
+  widthNum.addEventListener("change", function(){
+    setWidth(parseInt(widthNum.value, 10) || SERV_WIDTH, true);
+  });
   resetBtn.addEventListener("click", function(){
-    rm("theme"); rm("font"); rm("size");
+    rm("theme"); rm("font"); rm("size"); rm("width");
     location.reload();
   });
 

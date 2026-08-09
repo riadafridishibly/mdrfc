@@ -61,6 +61,9 @@ FLAGS
 Default width is **72 columns**, the long-standing RFC line-length convention. Both the terminal and web views share it.
 
 - Override per-run: `mdrfc README.md --width 80`
+- In the web view, the settings panel has a **Content width** slider (40–200
+  columns), remembered per browser. `--width` is its default; sliding back to
+  that value clears the override.
 - Pure plain-text RFC look (no color): `mdrfc README.md --no-color`
 
 ## Frontmatter
