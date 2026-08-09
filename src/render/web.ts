@@ -81,7 +81,9 @@ export function renderWeb(
 ): string {
   const marked = new Marked();
   const fm = parseFrontmatter(md);
-  const body = addCodeBlockTools(addHeadingIds(marked.parse(fm.content) as string));
+  const body = addCodeBlockTools(
+    addHeadingAnchors(marked.parse(fm.content) as string)
+  );
   const meta = opts.frontmatter ? renderFrontmatterHtml(fm.data) : "";
   const theme = opts.theme;
   const sidebar = tree ? renderSidebar(tree, currentRel ?? "") : "";
@@ -133,11 +135,16 @@ function fileTitle(path?: string): string | undefined {
 }
 
 /**
- * Add `id="<slug>"` to every <h1>..<h6> so anchor links (`#section`)
- * actually scroll. marked core doesn't emit heading IDs.
+ * Give every <h1>..<h6> an `id="<slug>"`, so anchor links (`#section`)
+ * actually scroll, and a permalink handle that links to it. marked core
+ * emits neither.
  * Slug: lowercase, trim, collapse spaces/punct to hyphens, dedupe.
+ *
+ * The handle holds no text of its own — its `#` is drawn by CSS — so the
+ * document's text stays exactly what the markdown said. Both the page title
+ * and the search highlighter read that text.
  */
-function addHeadingIds(html: string): string {
+function addHeadingAnchors(html: string): string {
   const seen = new Map<string, number>();
   const uniqueSlug = (slug: string): string => {
     const n = seen.get(slug) ?? 0;
@@ -148,7 +155,10 @@ function addHeadingIds(html: string): string {
     /<h([1-6])>([\s\S]*?)<\/h\1>/g,
     (_m, level: string, inner: string) => {
       const id = uniqueSlug(slugifyHeading(inner));
-      return `<h${level} id="${id}">${inner}</h${level}>`;
+      const handle =
+        `<a class="mdrfc-anchor" href="#${id}" aria-label="Link to this section"` +
+        ` title="Copy link to this section"></a>`;
+      return `<h${level} id="${id}">${inner}${handle}</h${level}>`;
     }
   );
 }
@@ -453,6 +463,29 @@ function htmlTemplate(
   h4, h5, h6 { font-size: 1.05em; }
   p { margin: 0.6em 0; }
   a { color: var(--link); }
+
+  /* ── heading permalinks ─────────────────────────────────────── */
+  .mdrfc-anchor {
+    margin-left: .35em;
+    color: var(--muted);
+    text-decoration: none;
+    opacity: 0;
+    transition: opacity .12s;
+  }
+  .mdrfc-anchor::before { content: "#"; }
+  .mdrfc-anchor[data-copied]::before { content: "✓"; }
+  h1:hover > .mdrfc-anchor,
+  h2:hover > .mdrfc-anchor,
+  h3:hover > .mdrfc-anchor,
+  h4:hover > .mdrfc-anchor,
+  h5:hover > .mdrfc-anchor,
+  h6:hover > .mdrfc-anchor,
+  .mdrfc-anchor:focus-visible,
+  .mdrfc-anchor[data-copied] { opacity: 1; }
+  .mdrfc-anchor:hover { color: var(--link); }
+  /* No hover to reveal it on touch, so leave it faintly visible. */
+  @media (hover: none) { .mdrfc-anchor { opacity: .4; } }
+
   hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
   ul, ol { padding-left: 1.6em; }
   li { margin: 0.2em 0; }
@@ -1059,6 +1092,15 @@ ${reloadScript}
 (function(){
   // Delegated so blocks swapped in by in-place navigation keep working.
   document.addEventListener("click", function(e){
+    var anchor = e.target.closest && e.target.closest(".mdrfc-anchor");
+    if(anchor){
+      // The jump is the browser's own; copying the URL is the part worth
+      // having, since the address bar is what people would reach for next.
+      write(new URL(anchor.getAttribute("href"), location.href).href)
+        .then(function(){ tick(anchor); })
+        .catch(function(){});
+      return;
+    }
     var btn = e.target.closest && e.target.closest(".mdrfc-code-btn");
     if(!btn) return;
     var box = btn.closest(".mdrfc-code");
@@ -1093,6 +1135,17 @@ ${reloadScript}
       document.body.removeChild(ta);
       ok ? resolve() : reject();
     });
+  }
+
+  // The permalink handle has no text to swap, so the tick rides on an
+  // attribute the stylesheet reads.
+  function tick(a){
+    if(a.dataset.busy) clearTimeout(Number(a.dataset.busy));
+    a.dataset.copied = "1";
+    a.dataset.busy = String(setTimeout(function(){
+      delete a.dataset.copied;
+      delete a.dataset.busy;
+    }, 1200));
   }
 
   function flash(btn, msg){

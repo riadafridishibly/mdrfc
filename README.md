@@ -124,6 +124,17 @@ Give `mdrfc` a **directory** and it scans for `*.md` files (hidden files,
 mdrfc docs/ --web
 ```
 
+## Heading links
+
+Every heading gets a slug id and a `#` handle after its text, faint until you
+hover the heading. Clicking it jumps to that section *and* copies the section's
+full URL, so linking someone to one part of a long document doesn't mean
+hand-assembling the fragment.
+
+The handle draws its `#` from CSS rather than holding text, so heading text
+stays exactly what the markdown said — which is what the page title and the
+search highlighter read.
+
 ## Search
 
 In `--web` mode, **Cmd-K** (or Ctrl-K) opens a command palette.
