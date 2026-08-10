@@ -11,6 +11,7 @@ import { findFreePort, SKIP_DIRS } from "./util.ts";
 import { openBrowser } from "./open.ts";
 import { listSystemFonts } from "./fonts.ts";
 import { isExtendedQuery, search } from "./search.ts";
+import { FAVICON_PATH, FAVICON_SVG } from "./favicon.ts";
 import type { RenderOpts } from "./util.ts";
 import preactSrc from "htm/preact/standalone.module.js" with { type: "text" };
 import paletteSrc from "./client/palette.js" with { type: "text" };
@@ -168,6 +169,19 @@ export async function startServer(opts: ServerOpts): Promise<void> {
         if (ok) return undefined;
         return new Response("Upgrade required", { status: 426 });
       }
+
+      // Site icon. The `.ico` sibling is answered empty rather than left to
+      // fall through: without it, a browser that ignores the SVG link would be
+      // handed the whole document as its icon.
+      if (u.pathname === FAVICON_PATH) {
+        return new Response(FAVICON_SVG, {
+          headers: {
+            "content-type": "image/svg+xml; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        });
+      }
+      if (u.pathname === "/favicon.ico") return new Response(null, { status: 204 });
 
       // Installed font families (monospace flagged) for the settings panel
       if (u.pathname === "/_fonts") {

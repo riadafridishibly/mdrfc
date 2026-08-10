@@ -1,5 +1,6 @@
 import { Marked } from "marked";
 import { decodeEntities, slugifyHeading, type RenderOpts, type Theme } from "../util.ts";
+import { FAVICON_PATH } from "../favicon.ts";
 import {
   flattenFrontmatter,
   frontmatterTitle,
@@ -469,6 +470,7 @@ function htmlTemplate(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="${FAVICON_PATH}">
 <title>${docTitle ? esc(docTitle) : "mdrfc"}</title>
 <style>
   :root {
