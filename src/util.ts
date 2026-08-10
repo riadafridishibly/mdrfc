@@ -39,14 +39,71 @@ export const SKIP_DIRS = new Set([
   "build",
 ]);
 
-/** Undo the escapes marked emits, so slugs and titles read as the source did. */
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  ensp: " ",
+  emsp: " ",
+  thinsp: " ",
+  shy: "­",
+  ndash: "–",
+  mdash: "—",
+  hellip: "…",
+  middot: "·",
+  bull: "•",
+  dagger: "†",
+  Dagger: "‡",
+  lsquo: "‘",
+  rsquo: "’",
+  ldquo: "“",
+  rdquo: "”",
+  laquo: "«",
+  raquo: "»",
+  copy: "©",
+  reg: "®",
+  trade: "™",
+  deg: "°",
+  plusmn: "±",
+  sect: "§",
+  para: "¶",
+  euro: "€",
+  pound: "£",
+  yen: "¥",
+  cent: "¢",
+};
+
+// The Latin-1 entities run in code point order from U+00C0, `times` and
+// `divide` among them. Named separately they would be sixty-four more lines
+// saying the same thing.
+for (const [i, name] of (
+  "Agrave Aacute Acirc Atilde Auml Aring AElig Ccedil Egrave Eacute Ecirc Euml " +
+  "Igrave Iacute Icirc Iuml ETH Ntilde Ograve Oacute Ocirc Otilde Ouml times " +
+  "Oslash Ugrave Uacute Ucirc Uuml Yacute THORN szlig agrave aacute acirc " +
+  "atilde auml aring aelig ccedil egrave eacute ecirc euml igrave iacute icirc " +
+  "iuml eth ntilde ograve oacute ocirc otilde ouml divide oslash ugrave uacute " +
+  "ucirc uuml yacute thorn yuml"
+)
+  .split(" ")
+  .entries()) {
+  NAMED_ENTITIES[name] = String.fromCharCode(0xc0 + i);
+}
+
+/**
+ * Undo HTML entities, so slugs and titles read as the rendered page does.
+ * Covers the escapes marked emits and the ones an author writes by hand;
+ * anything else is left as written, since a slug drops `&` and `;` anyway.
+ * One pass, so an escaped ampersand (`&amp;lt;`) does not decode twice.
+ */
 export function decodeEntities(s: string): string {
-  return s
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#(?:39|x27);/g, "'")
-    .replace(/&amp;/g, "&"); // last: an escaped ampersand must not re-decode
+  return s.replace(/&(#\d+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g, (m, body: string) => {
+    if (body[0] !== "#") return NAMED_ENTITIES[body] ?? m;
+    const code = /^#[xX]/.test(body) ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+  });
 }
 
 /**
@@ -58,15 +115,17 @@ export function decodeEntities(s: string): string {
  * rendered there have to land here too. Hence the two rules that look like
  * bugs: dropped punctuation leaves the spaces that surrounded it behind, so
  * `A — b` slugs to `a--b`, and runs of hyphens are never collapsed. Letters
- * outside ASCII are kept for the same reason.
+ * outside ASCII are kept, combining marks with them, and only a literal space
+ * becomes a hyphen — a tab or a newline is dropped like any other character
+ * outside the set.
  */
 export function slugifyHeading(text: string): string {
   return (
     decodeEntities(text.replace(/<[^>]+>/g, "")) // strip inline tags
       .trim()
       .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s_-]/gu, "") // drop punctuation and symbols
-      .replace(/\s/g, "-") || "section"
+      .replace(/[^\p{L}\p{N}\p{M}\p{Pc}\- ]/gu, "") // drop punctuation and symbols
+      .replace(/ /g, "-") || "section"
   );
 }
 

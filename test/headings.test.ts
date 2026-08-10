@@ -44,6 +44,24 @@ describe("heading slugs", () => {
     expect(idFor("日本語 heading")).toBe("日本語-heading");
   });
 
+  test("a combining mark survives with the letter it sits on", () => {
+    // The same two headings as above, decomposed — which is what a macOS
+    // filesystem and a good many editors hand over.
+    expect(idFor("cafe\u0301: notes")).toBe("cafe\u0301-notes");
+    expect(idFor("\u30D2\u3099 test")).toBe("\u30D2\u3099-test");
+  });
+
+  test("entities the author wrote slug as the characters they stand for", () => {
+    expect(idFor("A &mdash; B")).toBe("a--b");
+    expect(idFor("A &#8212; B")).toBe("a--b");
+    expect(idFor("Tea &amp; crumpets")).toBe("tea--crumpets");
+    expect(idFor("Caf&eacute; notes")).toBe("caf\u00E9-notes");
+  });
+
+  test("an image in a heading leaves nothing behind, as the page shows it", () => {
+    expect(idFor("![logo](logo.png) Title")).toBe("title");
+  });
+
   test("hyphens and underscores are left as they were written", () => {
     expect(idFor("snake_case & kebab-case")).toBe("snake_case--kebab-case");
   });
