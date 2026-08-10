@@ -143,14 +143,20 @@ collapsed, and letters outside ASCII are kept (`#café-notes`).
 
 ## Reading position
 
-The web view remembers where you were in each document, per path, for the
-browsing session. Save the file and live-reload puts you back at the same
-line; wander off to another file in the sidebar and come back, and it is
-still where you left it.
+The web view remembers where you were in each document, per path. Save the
+file and live-reload puts you back at the same line; wander off to another
+file in the sidebar and come back, and it is still where you left it. The
+memory outlives the tab and the server too — stop mdrfc, start it again
+tomorrow, and a half-read document opens half-read.
 
 Anything you asked for explicitly outranks it — a `#fragment` in the URL, or
 a result opened from the palette — so the memory only decides where a plain
 visit lands.
+
+Positions live in the browser's `localStorage`, which is scoped to the
+origin, so a run that lands on a different port (2119 is taken, mdrfc takes
+2120) starts fresh. The 200 most recently read documents are kept and older
+entries are dropped.
 
 ## Search
 

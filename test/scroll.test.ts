@@ -40,8 +40,18 @@ function run(url: string) {
   new Function(SRC)();
 }
 
-/** What the script would restore for `path` on a later visit. */
-const stored = (path: string) => sessionStorage.getItem("mdrfc.scroll:" + path);
+const key = (path: string) => "mdrfc.scroll:" + path;
+
+/** Write an entry as an earlier visit would have left it. */
+function seed(path: string, y: number, t = 1) {
+  localStorage.setItem(key(path), JSON.stringify({ y, t }));
+}
+
+/** The offset the script would restore for `path` on a later visit. */
+function stored(path: string): number | null {
+  const raw = localStorage.getItem(key(path));
+  return raw === null ? null : JSON.parse(raw).y;
+}
 
 function scrollTo(y: number) {
   Object.defineProperty(window, "scrollY", { value: y, configurable: true });
@@ -52,6 +62,7 @@ beforeEach(() => {
   // A real origin: the script keys on location.pathname, which about:blank
   // (happy-dom's default) has none of.
   GlobalRegistrator.register({ url: "http://localhost:2119/" });
+  localStorage.clear(); // now outlives a page, so it has to be cleared by hand
   Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
 });
 
@@ -61,13 +72,13 @@ afterEach(async () => {
 
 describe("per-document scroll memory", () => {
   test("restores the position stored for this path", () => {
-    sessionStorage.setItem("mdrfc.scroll:/guide/net.md", "820");
+    seed("/guide/net.md", 820);
     run("/guide/net.md");
     expect(scrolled).toEqual([820]);
   });
 
   test("leaves a document with no stored position at the top", () => {
-    sessionStorage.setItem("mdrfc.scroll:/other.md", "820");
+    seed("/other.md", 820);
     run("/guide/net.md");
     expect(scrolled).toEqual([]);
   });
@@ -79,25 +90,25 @@ describe("per-document scroll memory", () => {
     history.replaceState(null, "", "/b.md");
     scrollTo(70);
     (window as any).mdrfcScroll.save();
-    expect(stored("/a.md")).toBe("300");
-    expect(stored("/b.md")).toBe("70");
+    expect(stored("/a.md")).toBe(300);
+    expect(stored("/b.md")).toBe(70);
   });
 
   test("a hash in the URL wins over the stored position", () => {
-    sessionStorage.setItem("mdrfc.scroll:/guide/net.md", "820");
+    seed("/guide/net.md", 820);
     run("/guide/net.md#timeouts");
     expect(scrolled).toEqual([]);
   });
 
   test("a search hit handed over by the palette wins too", () => {
-    sessionStorage.setItem("mdrfc.scroll:/guide/net.md", "820");
+    seed("/guide/net.md", 820);
     sessionStorage.setItem("mdrfc.pendingHit", '{"query":"socket"}');
     run("/guide/net.md");
     expect(scrolled).toEqual([]);
   });
 
   test("restore reports whether it moved, so callers can fall back", () => {
-    sessionStorage.setItem("mdrfc.scroll:/a.md", "500");
+    seed("/a.md", 500);
     run("/a.md");
     const api = (window as any).mdrfcScroll;
     expect(api.restore("/a.md")).toBe(true);
@@ -105,7 +116,7 @@ describe("per-document scroll memory", () => {
   });
 
   test("a late layout shift is corrected, a reader's own scroll is not", () => {
-    sessionStorage.setItem("mdrfc.scroll:/a.md", "500");
+    seed("/a.md", 500);
     run("/a.md");
     expect(scrolled).toEqual([500]);
 
@@ -123,6 +134,33 @@ describe("per-document scroll memory", () => {
     run("/a.md");
     Object.defineProperty(window, "scrollY", { value: 640, configurable: true });
     window.dispatchEvent(new Event("pagehide"));
-    expect(stored("/a.md")).toBe("640");
+    expect(stored("/a.md")).toBe(640);
+  });
+
+  test("a position outlives the tab that recorded it", () => {
+    run("/a.md");
+    scrollTo(410);
+    (window as any).mdrfcScroll.save();
+    sessionStorage.clear(); // the browser, closing the tab
+
+    run("/a.md");
+    expect(scrolled).toEqual([410]);
+  });
+
+  test("the least recently read documents are dropped past the cap", () => {
+    for (let i = 0; i < 205; i++) seed("/doc" + i + ".md", 100 + i, i);
+    run("/doc204.md");
+
+    expect(stored("/doc0.md")).toBe(null);
+    expect(stored("/doc4.md")).toBe(null);
+    expect(stored("/doc5.md")).toBe(105);
+    expect(stored("/doc204.md")).toBe(304);
+  });
+
+  test("pruning leaves other mdrfc settings alone", () => {
+    localStorage.setItem("mdrfc.width", "88");
+    for (let i = 0; i < 205; i++) seed("/doc" + i + ".md", 100 + i, i);
+    run("/doc204.md");
+    expect(localStorage.getItem("mdrfc.width")).toBe("88");
   });
 });

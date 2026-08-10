@@ -233,35 +233,68 @@ function htmlTemplate(
 })();
 </script>`;
 
-  // Where each document was left, keyed by path for the browsing session.
-  // Reading half of something long and coming back to it — through a live
-  // reload, the sidebar, or the back button — used to start over at the top.
-  // Sits alongside the sidebar's own remembered scroll.
+  // Where each document was left, keyed by path. Reading half of something
+  // long and coming back to it — through a live reload, the sidebar, the back
+  // button, or a server started again days later — used to start over at the
+  // top. Sits alongside the sidebar's own remembered scroll.
   const scrollScript = `<script>
 (function(){
   var KEY = "mdrfc.scroll:";
   var HANDOFF = "mdrfc.pendingHit";  // the palette's, read by the highlighter
+  var MAX = 200;                     // documents kept; least recently read drop
   function path(url){ return new URL(url || location.href, location.href).pathname; }
-  function rd(k){ try{ return sessionStorage.getItem(k); }catch(e){ return null; } }
-  function wr(k, v){ try{ sessionStorage.setItem(k, v); }catch(e){} }
+  function rd(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+  function wr(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
+  // The handoff is one navigation wide and belongs to the tab that made it.
+  function handoff(){ try{ return sessionStorage.getItem(HANDOFF); }catch(e){ return null; } }
 
   var lastSet = -1;
 
-  function save(url){ wr(KEY + path(url), String(Math.round(window.scrollY))); }
+  // Stamped, so the pruning below has something to rank entries by.
+  function save(url){
+    wr(KEY + path(url), JSON.stringify({ y: Math.round(window.scrollY), t: Date.now() }));
+  }
+
+  function stored(url){
+    var raw = rd(KEY + path(url));
+    if(!raw) return null;
+    try{ return JSON.parse(raw); }catch(e){ return null; }
+  }
 
   // A hash and a pending search hit are both destinations the reader just
   // asked for, so neither gives way to where this document was last left.
   // Returns whether the caller's own fallback is still needed.
   function restore(url){
     if(new URL(url || location.href, location.href).hash) return false;
-    if(rd(HANDOFF)) return false;
-    var y = parseInt(rd(KEY + path(url)), 10);
-    if(!y) return false;
-    lastSet = y;
-    window.scrollTo(0, y);
+    if(handoff()) return false;
+    var hit = stored(url);
+    if(!hit || !hit.y) return false;
+    lastSet = hit.y;
+    window.scrollTo(0, hit.y);
     return true;
   }
   window.mdrfcScroll = { save: save, restore: restore };
+
+  // An entry now outlives the tab that wrote it and nothing else clears it,
+  // so a tree read through over months would grow without end. Trim to the
+  // most recently read, once per load rather than on every save.
+  function stamp(k){
+    try{ return JSON.parse(localStorage.getItem(k)).t || 0; }catch(e){ return 0; }
+  }
+  function prune(){
+    var keys = [];
+    try {
+      for(var i = 0; i < localStorage.length; i++){
+        var k = localStorage.key(i);
+        if(k && k.indexOf(KEY) === 0) keys.push(k);
+      }
+    } catch(e){ return; }
+    if(keys.length <= MAX) return;
+    keys.sort(function(a, b){ return stamp(a) - stamp(b); });
+    for(var j = 0; j < keys.length - MAX; j++){
+      try{ localStorage.removeItem(keys[j]); }catch(e){}
+    }
+  }
 
   // Left to itself the browser restores from a height it measured before the
   // stored font size and column width were applied, landing in the wrong place.
@@ -277,6 +310,7 @@ function htmlTemplate(
   window.addEventListener("pagehide", function(){ save(); });
 
   restore();
+  prune();
   // Images and a webfont land after this runs and move the offset out from
   // under it. Repeat once everything has settled — unless the reader has
   // meanwhile scrolled somewhere of their own choosing.
