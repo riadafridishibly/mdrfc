@@ -3,7 +3,15 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fuzzyMatch, search } from "../src/search.ts";
-import { slugifyHeading } from "../src/util.ts";
+import { renderWeb } from "../src/render/web.ts";
+import { RFC_WIDTH, slugifyHeading, type RenderOpts } from "../src/util.ts";
+
+const OPTS: RenderOpts = {
+  width: RFC_WIDTH,
+  color: false,
+  theme: "auto",
+  frontmatter: true,
+};
 
 function fixture(): string {
   const dir = mkdtempSync(join(tmpdir(), "mdrfc-search-"));
@@ -131,5 +139,90 @@ describe("search", () => {
     const hit = search(dir, "timeout").find((h) => h.kind === "text")!;
     const [start, len] = hit.range!;
     expect(hit.text.slice(start, start + len).toLowerCase()).toBe("timeout");
+  });
+});
+
+// The index reads the markdown source and the renderer reads its own HTML, so
+// an anchor that no id answers is a jump that silently does nothing.
+describe("anchors land on the rendered document", () => {
+  const MD = [
+    "Overview",
+    "========",
+    "",
+    "Sockets are covered below.",
+    "",
+    "Socket tuning",
+    "-------------",
+    "",
+    "Set the socket timeout to 30s.",
+    "",
+    "## ![logo](logo.png) Socket diagram",
+    "",
+    "A socket diagram.",
+  ].join("\n");
+
+  const dir = mkdtempSync(join(tmpdir(), "mdrfc-anchors-"));
+  writeFileSync(join(dir, "doc.md"), MD);
+  const ids = new Set(
+    [...renderWeb(MD, OPTS).matchAll(/<h[1-6] id="([^"]*)">/g)].map((m) => m[1]!)
+  );
+
+  test("a setext heading is indexed, with the id the renderer gave it", () => {
+    const hit = search(dir, "Socket tuning").find((h) => h.kind === "heading");
+    expect(hit?.anchor).toBe("socket-tuning");
+    expect(ids.has(hit!.anchor!)).toBe(true);
+  });
+
+  test("an image in a heading is dropped by both, not kept as its alt text", () => {
+    const hit = search(dir, "Socket diagram").find((h) => h.kind === "heading");
+    expect(hit?.anchor).toBe("socket-diagram");
+    expect(hit?.text).toBe("Socket diagram");
+    expect(ids.has(hit!.anchor!)).toBe(true);
+  });
+
+  test("every anchor the index hands out is an id in the page", () => {
+    for (const hit of search(dir, "socket")) {
+      if (hit.anchor) expect(ids.has(hit.anchor)).toBe(true);
+    }
+  });
+
+  test("one setext heading straight after another is still indexed", () => {
+    const hit = search(dir, "Overview").find((h) => h.kind === "heading");
+    expect(hit?.anchor).toBe("overview");
+  });
+});
+
+// `---` reads as a setext underline from a line at a time, which the renderer
+// does not always agree with.
+describe("lines that only look like headings", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mdrfc-setext-"));
+  writeFileSync(
+    join(dir, "doc.md"),
+    [
+      "---",
+      "title: Socket notes",
+      "---",
+      "",
+      "# Real heading",
+      "",
+      "A socket paragraph that",
+      "runs across two lines",
+      "---",
+      "",
+      "socket after the rule",
+    ].join("\n")
+  );
+
+  const headings = () => search(dir, "socket").filter((h) => h.kind === "heading");
+
+  test("frontmatter over its closing fence is not one", () => {
+    expect(headings().map((h) => h.text)).not.toContain("title: Socket notes");
+  });
+
+  test("a paragraph of more than one line is left alone", () => {
+    expect(headings().map((h) => h.text)).not.toContain("runs across two lines");
+    // the text hits under it still carry the last heading the renderer gave an id
+    const after = search(dir, "socket after").find((h) => h.kind === "text");
+    expect(after?.anchor).toBe("real-heading");
   });
 });

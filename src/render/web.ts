@@ -1,11 +1,39 @@
 import { Marked } from "marked";
-import { slugifyHeading, type RenderOpts, type Theme } from "../util.ts";
+import {
+  DEFAULT_TOC,
+  TOC_MODES,
+  decodeEntities,
+  slugifyHeading,
+  type RenderOpts,
+  type Theme,
+  type TocMode,
+} from "../util.ts";
+import { FAVICON_PATH } from "../favicon.ts";
 import {
   flattenFrontmatter,
   frontmatterTitle,
   parseFrontmatter,
   type FmValue,
 } from "../frontmatter.ts";
+
+/** The placement names as a literal the inline scripts can test against. */
+const TOC_MODE_RE = `/^(?:${TOC_MODES.join("|")})$/`;
+
+/**
+ * The dark palette, shared by the forced theme and the OS one. Written out
+ * twice they drift, and a token that reaches only one of them paints its text
+ * the colour of its own background.
+ */
+const DARK_TOKENS = `
+    color-scheme: dark;
+    --bg: #1a1a1a; --fg: #e0e0e0; --muted: #999; --border: #444;
+    --code-bg: #2a2a2a; --link: #6cb6ff;
+    --scroll-thumb: rgba(255,255,255,.20);
+    --scroll-thumb-hover: rgba(255,255,255,.34);
+    --hit-bg: #3d3200; --hit-fg: #ffe9a3;
+    --hit-line-bg: #55450a;
+    --hit-cur-bg: #b98900; --hit-cur-fg: #1a1a1a;
+  `;
 
 export interface TreeNode {
   name: string;
@@ -52,6 +80,52 @@ function renderSidebar(tree: TreeNode, currentRel: string): string {
 <div id="mdrfc-resizer" class="mdrfc-resizer" role="separator" aria-orientation="vertical" aria-label="Resize file list" title="Drag to resize · double-click to reset"></div>`;
 }
 
+interface Heading {
+  level: number;
+  id: string;
+  /** Heading text, still escaped as marked emitted it, inline markup dropped. */
+  text: string;
+}
+
+/** The body's headings, in document order, as the anchor pass left them. */
+function extractHeadings(html: string): Heading[] {
+  const out: Heading[] = [];
+  const re = /<h([1-6]) id="([^"]*)">([\s\S]*?)<\/h\1>/g;
+  for (let m = re.exec(html); m; m = re.exec(html)) {
+    const text = m[3]!.replace(/<[^>]+>/g, "").trim();
+    if (text) out.push({ level: Number(m[1]), id: m[2]!, text });
+  }
+  return out;
+}
+
+/** A document with one heading or none has nothing worth listing. */
+const MIN_TOC_HEADINGS = 2;
+
+/**
+ * Build the table of contents from the body's own headings.
+ * Indentation is relative to the shallowest heading present, so a document
+ * whose sections all start at h2 isn't listed one step in, and clamped so a
+ * deeply nested tail still fits a margin column.
+ *
+ * The markup ships whatever the placement setting says: hiding it, or moving
+ * it to a margin, is the stylesheet's job, so the reader can switch placement
+ * without the page being rendered again.
+ */
+function renderTocHtml(headings: Heading[]): string {
+  if (headings.length < MIN_TOC_HEADINGS) return "";
+  const base = Math.min(...headings.map((h) => h.level));
+  const items = headings
+    .map((h) => {
+      const depth = Math.min(h.level - base, 3);
+      return `<li class="lvl-${depth}"><a href="#${h.id}">${h.text}</a></li>`;
+    })
+    .join("");
+  return (
+    `<nav id="mdrfc-toc" class="mdrfc-toc mdrfc-scroll" data-mdrfc-chrome aria-label="Table of contents">` +
+    `<div class="mdrfc-toc-head">Contents</div><ol class="mdrfc-toc-list">${items}</ol></nav>`
+  );
+}
+
 /** Render frontmatter as a definition-list metadata block above the document. */
 function renderFrontmatterHtml(data: Record<string, FmValue>): string {
   const pairs = flattenFrontmatter(data);
@@ -66,10 +140,11 @@ function renderFrontmatterHtml(data: Record<string, FmValue>): string {
  * Render markdown → standalone HTML.
  * RFC-style: monospace, 72ch max content width, centered.
  * Frontmatter is stripped from the body, shown as a metadata block (unless
- * disabled) and its `title` becomes the document title.
+ * disabled) and its `title` becomes the document title. A table of contents
+ * follows it, placed at the top of the document or in either margin.
  * Injects a tiny WebSocket client for live-reload when `reloadToken` is set,
- * and a settings panel (theme / searchable font picker / size) persisted in
- * localStorage.
+ * and a settings panel (theme / searchable font picker / size / content width /
+ * contents placement) persisted in localStorage.
  * `tree` (directory mode) adds a fixed sidebar listing every .md file.
  */
 export function renderWeb(
@@ -81,18 +156,22 @@ export function renderWeb(
 ): string {
   const marked = new Marked();
   const fm = parseFrontmatter(md);
-  const body = addCodeBlockTools(addHeadingIds(marked.parse(fm.content) as string));
+  const body = addCodeBlockTools(
+    addHeadingAnchors(marked.parse(fm.content) as string)
+  );
   const meta = opts.frontmatter ? renderFrontmatterHtml(fm.data) : "";
+  const toc = renderTocHtml(extractHeadings(body));
   const theme = opts.theme;
   const sidebar = tree ? renderSidebar(tree, currentRel ?? "") : "";
   return htmlTemplate(
-    meta + openExternalLinksInNewTab(body),
+    meta + toc + openExternalLinksInNewTab(body),
     opts.width,
     theme,
     reloadToken,
     sidebar,
     documentTitle(fm.data, body, currentRel || opts.source),
-    opts.dirMode === true
+    opts.dirMode === true,
+    opts.toc ?? DEFAULT_TOC
   );
 }
 
@@ -113,13 +192,7 @@ function documentTitle(
 function firstHeadingText(html: string): string | undefined {
   const m = html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/);
   if (!m) return undefined;
-  const text = m[1]
-    .replace(/<[^>]+>/g, "")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#(?:39|x27);/g, "'")
-    .replace(/&amp;/g, "&") // last: an escaped ampersand must not re-decode
+  const text = decodeEntities(m[1].replace(/<[^>]+>/g, ""))
     .replace(/\s+/g, " ")
     .trim();
   return text || undefined;
@@ -133,11 +206,16 @@ function fileTitle(path?: string): string | undefined {
 }
 
 /**
- * Add `id="<slug>"` to every <h1>..<h6> so anchor links (`#section`)
- * actually scroll. marked core doesn't emit heading IDs.
+ * Give every <h1>..<h6> an `id="<slug>"`, so anchor links (`#section`)
+ * actually scroll, and a permalink handle that links to it. marked core
+ * emits neither.
  * Slug: lowercase, trim, collapse spaces/punct to hyphens, dedupe.
+ *
+ * The handle holds no text of its own — its `#` is drawn by CSS — so the
+ * document's text stays exactly what the markdown said. Both the page title
+ * and the search highlighter read that text.
  */
-function addHeadingIds(html: string): string {
+function addHeadingAnchors(html: string): string {
   const seen = new Map<string, number>();
   const uniqueSlug = (slug: string): string => {
     const n = seen.get(slug) ?? 0;
@@ -148,7 +226,10 @@ function addHeadingIds(html: string): string {
     /<h([1-6])>([\s\S]*?)<\/h\1>/g,
     (_m, level: string, inner: string) => {
       const id = uniqueSlug(slugifyHeading(inner));
-      return `<h${level} id="${id}">${inner}</h${level}>`;
+      const handle =
+        `<a class="mdrfc-anchor" href="#${id}" aria-label="Link to this section"` +
+        ` title="Copy link to this section"></a>`;
+      return `<h${level} id="${id}">${inner}${handle}</h${level}>`;
     }
   );
 }
@@ -165,7 +246,7 @@ function addCodeBlockTools(html: string): string {
   return html.replace(
     /<pre(\s[^>]*)?>([\s\S]*?)<\/pre>/g,
     (_m, attrs: string | undefined, inner: string) =>
-      `<div class="mdrfc-code"><div class="mdrfc-code-tools">` +
+      `<div class="mdrfc-code"><div class="mdrfc-code-tools" data-mdrfc-chrome>` +
       btn("wrap", "Toggle line wrapping", ' aria-pressed="false"') +
       btn("copy", "Copy code") +
       `</div><pre${attrs ?? ""}>${inner}</pre></div>`
@@ -192,7 +273,8 @@ function htmlTemplate(
   reloadToken?: string,
   sidebar = "",
   docTitle?: string,
-  dirMode = false
+  dirMode = false,
+  tocMode: TocMode = DEFAULT_TOC
 ): string {
   const reloadScript = reloadToken
     ? `<script>
@@ -207,23 +289,279 @@ function htmlTemplate(
   const htmlThemeAttr =
     theme === "light" || theme === "dark" ? ` data-theme="${theme}"` : "";
 
-  // Runs before first paint so the sidebar never flashes at the wrong
-  // width or slides in from collapsed on every navigation.
-  const sidebarBootScript = sidebar
-    ? `<script>
-(function(){
-  try {
-    var root = document.documentElement;
+  // Runs before first paint so the content column never reflows, and the
+  // sidebar never flashes at the wrong width or slides in from collapsed on
+  // every navigation.
+  const sidebarBoot = sidebar
+    ? `
     var w = localStorage.getItem("mdrfc.sidebarW");
     if(w) root.style.setProperty("--sidebar-w", parseInt(w,10)+"px");
     var collapsed = localStorage.getItem("mdrfc.sidebarCollapsed") === "1";
     // narrow screens start collapsed regardless of the desktop preference
     if(window.matchMedia("(max-width: 720px)").matches) collapsed = true;
-    if(collapsed) root.classList.add("mdrfc-sidebar-collapsed");
+    if(collapsed) root.classList.add("mdrfc-sidebar-collapsed");`
+    : "";
+  // The margin needs a window wide enough to hold a column beside the text.
+  // Measuring that needs a laid-out document, so this coarse test stands in
+  // until the placement script can measure — a fallback settled after the
+  // first paint would otherwise shove the document down as it landed. It is
+  // the placement actually in force that gets tested, stored or served: a
+  // served margin on a narrow window paints in the wrong place otherwise.
+  const bootScript = `<script>
+(function(){
+  try {
+    var root = document.documentElement;
+    var cw = parseInt(localStorage.getItem("mdrfc.width"), 10);
+    if(cw) root.style.setProperty("--content-w", cw+"ch");
+    var stored = localStorage.getItem("mdrfc.toc");
+    var toc = ${TOC_MODE_RE}.test(stored) ? stored : ${JSON.stringify(tocMode)};
+    if((toc === "left" || toc === "right") && !window.matchMedia("(min-width: 1100px)").matches) toc = "top";
+    root.setAttribute("data-toc", toc);${sidebarBoot}
   } catch(e){}
 })();
-</script>`
-    : "";
+</script>`;
+
+  // Where each document was left, keyed by path. Reading half of something
+  // long and coming back to it — through a live reload, the sidebar, the back
+  // button, or a server started again days later — used to start over at the
+  // top. Sits alongside the sidebar's own remembered scroll.
+  const scrollScript = `<script>
+(function(){
+  var KEY = "mdrfc.scroll:";
+  var HANDOFF = "mdrfc.pendingHit";  // the palette's, read by the highlighter
+  var MAX = 200;                     // documents kept; least recently read drop
+  function path(url){ return new URL(url || location.href, location.href).pathname; }
+  function rd(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+  function wr(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
+  // The handoff is one navigation wide and belongs to the tab that made it.
+  function handoff(){ try{ return sessionStorage.getItem(HANDOFF); }catch(e){ return null; } }
+
+  var lastSet = -1, want = -1;
+
+  // Stamped, so the pruning below has something to rank entries by.
+  function save(url){
+    wr(KEY + path(url), JSON.stringify({ y: Math.round(window.scrollY), t: Date.now() }));
+  }
+
+  function stored(url){
+    var raw = rd(KEY + path(url));
+    if(!raw) return null;
+    try{ return JSON.parse(raw); }catch(e){ return null; }
+  }
+
+  // The browser clamps to the height it has, which before the images land is
+  // short of where the reader was. Hold on to what was asked for, and take the
+  // landing — not the ask — as the mark that tells the reader's own scrolling
+  // apart from this.
+  function go(y){
+    want = y;
+    window.scrollTo(0, y);
+    lastSet = Math.round(window.scrollY);
+  }
+
+  // A hash and a pending search hit are both destinations the reader just
+  // asked for, so neither gives way to where this document was last left.
+  // Returns whether the caller's own fallback is still needed.
+  function restore(url){
+    if(new URL(url || location.href, location.href).hash) return false;
+    if(handoff()) return false;
+    var hit = stored(url);
+    if(!hit || !hit.y) return false;
+    go(hit.y);
+    return true;
+  }
+  window.mdrfcScroll = { save: save, restore: restore };
+
+  // An entry now outlives the tab that wrote it and nothing else clears it,
+  // so a tree read through over months would grow without end. Trim to the
+  // most recently read, once per load rather than on every save.
+  function stamp(k){
+    try{ return JSON.parse(localStorage.getItem(k)).t || 0; }catch(e){ return 0; }
+  }
+  function prune(){
+    var entries = [];
+    try {
+      for(var i = 0; i < localStorage.length; i++){
+        var k = localStorage.key(i);
+        if(k && k.indexOf(KEY) === 0) entries.push({ k: k, t: stamp(k) });
+      }
+    } catch(e){ return; }
+    if(entries.length <= MAX) return;
+    entries.sort(function(a, b){ return a.t - b.t; });
+    for(var j = 0; j < entries.length - MAX; j++){
+      try{ localStorage.removeItem(entries[j].k); }catch(e){}
+    }
+  }
+
+  // Left to itself the browser restores from a height it measured before the
+  // stored font size and column width were applied, landing in the wrong place.
+  try { if("scrollRestoration" in history) history.scrollRestoration = "manual"; } catch(e){}
+
+  // A write per frame of a flick scroll is a hundred synchronous trips to
+  // storage for one position worth keeping; a quarter second of stillness
+  // reads the same to the reader.
+  var pending = 0, touched = false;
+  window.addEventListener("scroll", function(){
+    if(Math.abs(window.scrollY - lastSet) > 2) touched = true;
+    if(pending) return;
+    pending = setTimeout(function(){ pending = 0; save(); }, 250);
+  }, { passive: true });
+  // The write the throttle is waiting on never happens if the tab goes first.
+  window.addEventListener("pagehide", function(){ save(); });
+
+  restore();
+  prune();
+  // Images and a webfont land after this runs and move the offset out from
+  // under it. Repeat once everything has settled, from the offset asked for
+  // rather than the clamped landing — unless the reader has meanwhile scrolled
+  // somewhere of their own choosing, or was never restored at all because a
+  // hash or a search hit had already claimed where the page opens.
+  window.addEventListener("load", function(){ if(!touched && want > 0) go(want); });
+})();
+</script>`;
+
+  // Table of contents: placement and section tracking. The list itself is in
+  // the document already; this decides where it sits and which entry is lit.
+  const tocScript = `<script>
+(function(){
+  var root = document.documentElement;
+  var SERV = ${JSON.stringify(tocMode)};
+  var MODES = ${TOC_MODE_RE};
+  var MIN_W = 190;   // narrower than this a margin column reads as a scrap
+  var MAX_W = 300;
+  var GAP = 24;      // clear space between the column and the document
+  var EDGE = 12;     // and between the column and the window, when pushed out
+  var SPY = 84;      // a heading above this line counts as the section in view
+
+  var mode = SERV, toc = null, links = [], targets = [], offsets = [], current = -1;
+  var lastW = -1, lastX = -1;
+
+  function stored(){ try{ return localStorage.getItem("mdrfc.toc"); }catch(e){ return null; } }
+
+  /**
+   * Put the list where the setting asks for, if it fits. A margin column is
+   * measured against the space actually left beside the text — which the
+   * window size, the content width, the font size and the filetree all move —
+   * and gives way to the top of the document when that space runs out.
+   */
+  function place(){
+    var main = document.querySelector("main");
+    if(!main) return;
+    var rect = main.getBoundingClientRect();
+    lastW = rect.width;
+    lastX = rect.left;
+    root.classList.remove("mdrfc-toc-placed");
+    if(!toc || mode === "off" || mode === "top"){ root.setAttribute("data-toc", mode); return; }
+    var vw = root.clientWidth;
+    var aside = document.getElementById("mdrfc-sidebar");
+    var blocked = aside && !root.classList.contains("mdrfc-sidebar-collapsed")
+      ? aside.getBoundingClientRect().right : 0;
+    var room = mode === "left" ? rect.left - blocked : vw - rect.right;
+    if(room < MIN_W + GAP){ root.setAttribute("data-toc", "top"); return; }
+    var w = Math.min(MAX_W, room - GAP);
+    var x = mode === "left"
+      ? Math.max(blocked + EDGE, rect.left - GAP - w)
+      : Math.min(vw - EDGE - w, rect.right + GAP);
+    root.style.setProperty("--toc-w", Math.round(w) + "px");
+    root.style.setProperty("--toc-x", Math.round(x) + "px");
+    root.setAttribute("data-toc", mode);
+    root.classList.add("mdrfc-toc-placed");
+  }
+
+  function index(){
+    toc = document.getElementById("mdrfc-toc");
+    links = []; targets = []; current = -1;
+    if(!toc) return;
+    Array.prototype.forEach.call(toc.querySelectorAll("a"), function(a){
+      a.classList.remove("active");   // nothing is lit until the spy says so
+      var href = a.getAttribute("href") || "";
+      var el = href.charAt(0) === "#" ? document.getElementById(decodeURIComponent(href.slice(1))) : null;
+      if(el){ links.push(a); targets.push(el); }
+    });
+  }
+
+  // Keep the lit entry in view when the column scrolls on its own. Done by
+  // hand: scrollIntoView would take the document along with it.
+  function reveal(a){
+    if(!toc || toc.scrollHeight <= toc.clientHeight) return;
+    var top = a.offsetTop, bottom = top + a.offsetHeight;
+    if(top < toc.scrollTop) toc.scrollTop = top - 8;
+    else if(bottom > toc.scrollTop + toc.clientHeight) toc.scrollTop = bottom - toc.clientHeight + 8;
+  }
+
+  // Where each heading sits in the document. Read once per layout change
+  // rather than per scroll frame: measuring every heading on the way past
+  // forces a layout, and a long document is where the list is wanted most.
+  function measure(){
+    var y = window.scrollY;
+    offsets = targets.map(function(el){ return el.getBoundingClientRect().top + y; });
+  }
+
+  // The section being read is the last heading to have passed the top of the
+  // window; before any has, it is the first.
+  function spy(){
+    if(!links.length || root.getAttribute("data-toc") === "off") return;
+    var line = window.scrollY + SPY;
+    var i = 0;
+    for(var k = 0; k < offsets.length; k++){
+      if(offsets[k] > line) break;
+      i = k;
+    }
+    if(i === current) return;
+    if(links[current]) links[current].classList.remove("active");
+    current = i;
+    links[i].classList.add("active");
+    reveal(links[i]);
+  }
+
+  function relayout(){
+    place();
+    measure();
+    spy();
+  }
+
+  function apply(next){
+    mode = MODES.test(next) ? next : SERV;
+    relayout();
+  }
+
+  window.mdrfcToc = {
+    apply: apply,
+    // A document swapped in place brings its own list with it.
+    refresh: function(){ index(); relayout(); }
+  };
+
+  index();
+  apply(stored() || SERV);
+
+  var pending = 0;
+  window.addEventListener("scroll", function(){
+    if(pending) return;
+    pending = requestAnimationFrame(function(){ pending = 0; spy(); });
+  }, { passive: true });
+  window.addEventListener("resize", relayout);
+  // Images landing move every heading below them; without an observer to
+  // notice, this is the one moment worth re-measuring for.
+  window.addEventListener("load", function(){ measure(); spy(); });
+  // The column also moves when the filetree opens or the reader changes the
+  // font size or content width. Only width and offset ask for the placement to
+  // be worked out again — measuring on every height change would chase the
+  // list's own placement — but any height change moves the headings.
+  if(window.ResizeObserver){
+    var ro = new ResizeObserver(function(){
+      var main = document.querySelector("main");
+      if(!main) return;
+      var r = main.getBoundingClientRect();
+      if(r.width !== lastW || r.left !== lastX) place();
+      measure();
+      spy();
+    });
+    ro.observe(document.body);
+    var el = document.querySelector("main");
+    if(el) ro.observe(el);
+  }
+})();
+</script>`;
 
   // Sidebar behaviour: collapse, drag-resize, and persisted tree state.
   // Navigation swaps <main> in place instead of reloading, so the tree's
@@ -326,6 +664,9 @@ function htmlTemplate(
     var doc = new DOMParser().parseFromString(html, "text/html");
     var next = doc.querySelector("main");
     if(!next){ location.href = url; return; }
+    // Painted hits hold ranges into the markup about to be thrown away, which
+    // would keep every document ever swapped out alive behind them.
+    if(window.mdrfcHighlights) window.mdrfcHighlights.clear();
     main.innerHTML = next.innerHTML;
     if(doc.title) document.title = doc.title;
     var path = new URL(url, location.href).pathname;
@@ -338,11 +679,15 @@ function htmlTemplate(
     var hash = new URL(url, location.href).hash;
     var target = hash ? document.getElementById(decodeURIComponent(hash.slice(1))) : null;
     if(target) target.scrollIntoView();
-    else window.scrollTo(0, 0);
+    else if(!window.mdrfcScroll.restore(url)) window.scrollTo(0, 0);
+    if(window.mdrfcToc) window.mdrfcToc.refresh();
   }
-  // exposed so the command palette can reuse in-place navigation
+  // Exposed so the command palette can reuse in-place navigation. Resolves
+  // once the new document is in the DOM, which is when the palette paints its
+  // search hits over it.
   window.mdrfcNavigate = function(url){
-    fetch(url).then(function(r){ return r.text(); }).then(function(html){
+    window.mdrfcScroll.save();   // before the address changes under the key
+    return fetch(url).then(function(r){ return r.text(); }).then(function(html){
       history.pushState({ mdrfc: 1 }, "", url);
       swap(html, url);
       if(isNarrow()) setCollapsed(true, false);
@@ -369,14 +714,16 @@ function htmlTemplate(
     : "";
 
   return `<!doctype html>
-<html lang="en"${htmlThemeAttr}>
+<html lang="en"${htmlThemeAttr} data-toc="${tocMode}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="${FAVICON_PATH}">
 <title>${docTitle ? esc(docTitle) : "mdrfc"}</title>
 <style>
   :root {
     --font-size: 14px;
+    --content-w: ${width}ch;
     --sidebar-w: 248px;
     --bg: #ffffff;
     --fg: #1a1a1a;
@@ -386,24 +733,26 @@ function htmlTemplate(
     --link: #2563eb;
     --scroll-thumb: rgba(0,0,0,.22);
     --scroll-thumb-hover: rgba(0,0,0,.38);
+    --hit-bg: #fff4b8;
+    --hit-fg: #1a1a1a;
+    --hit-line-bg: #ffe9a3;
+    --hit-cur-bg: #ffc107;
+    --hit-cur-fg: #1a1a1a;
   }
   html[data-theme="light"] { color-scheme: light; }
-  html[data-theme="dark"] {
-    color-scheme: dark;
-    --bg: #1a1a1a; --fg: #e0e0e0; --muted: #999; --border: #444;
-    --code-bg: #2a2a2a; --link: #6cb6ff;
-    --scroll-thumb: rgba(255,255,255,.20);
-    --scroll-thumb-hover: rgba(255,255,255,.34);
-  }
+  html[data-theme="dark"] { ${DARK_TOKENS} }
   /* auto: follow OS, unless user forced light */
   @media (prefers-color-scheme: dark) {
-    html:not([data-theme="light"]) {
-      color-scheme: dark;
-      --bg: #1a1a1a; --fg: #e0e0e0; --muted: #999; --border: #444;
-      --code-bg: #2a2a2a; --link: #6cb6ff;
-      --scroll-thumb: rgba(255,255,255,.20);
-      --scroll-thumb-hover: rgba(255,255,255,.34);
-    }
+    html:not([data-theme="light"]) { ${DARK_TOKENS} }
+  }
+
+  /* ── search hits, painted after a palette jump (Custom Highlight API) ──
+     The picked row is banded whole, its query terms brighter inside it; the
+     same terms elsewhere in the document stay faint. */
+  ::highlight(mdrfc-hit-line) { background-color: var(--hit-line-bg); color: var(--hit-fg); }
+  ::highlight(mdrfc-hit) { background-color: var(--hit-bg); color: var(--hit-fg); }
+  ::highlight(mdrfc-hit-current) {
+    background-color: var(--hit-cur-bg); color: var(--hit-cur-fg);
   }
   body {
     background: var(--bg);
@@ -417,7 +766,7 @@ function htmlTemplate(
     -webkit-font-smoothing: antialiased;
   }
   main {
-    max-width: ${width}ch;
+    max-width: var(--content-w);
     margin: 0 auto;
   }
   h1, h2, h3, h4, h5, h6 { line-height: 1.25; margin: 1.5em 0 0.5em; scroll-margin-top: 1rem; }
@@ -427,6 +776,29 @@ function htmlTemplate(
   h4, h5, h6 { font-size: 1.05em; }
   p { margin: 0.6em 0; }
   a { color: var(--link); }
+
+  /* ── heading permalinks ─────────────────────────────────────── */
+  .mdrfc-anchor {
+    margin-left: .35em;
+    color: var(--muted);
+    text-decoration: none;
+    opacity: 0;
+    transition: opacity .12s;
+  }
+  .mdrfc-anchor::before { content: "#"; }
+  .mdrfc-anchor[data-copied]::before { content: "✓"; }
+  h1:hover > .mdrfc-anchor,
+  h2:hover > .mdrfc-anchor,
+  h3:hover > .mdrfc-anchor,
+  h4:hover > .mdrfc-anchor,
+  h5:hover > .mdrfc-anchor,
+  h6:hover > .mdrfc-anchor,
+  .mdrfc-anchor:focus-visible,
+  .mdrfc-anchor[data-copied] { opacity: 1; }
+  .mdrfc-anchor:hover { color: var(--link); }
+  /* No hover to reveal it on touch, so leave it faintly visible. */
+  @media (hover: none) { .mdrfc-anchor { opacity: .4; } }
+
   hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
   ul, ol { padding-left: 1.6em; }
   li { margin: 0.2em 0; }
@@ -491,6 +863,50 @@ function htmlTemplate(
   .mdrfc-fm dt { color: var(--muted); }
   .mdrfc-fm dt::after { content: ":"; }
   .mdrfc-fm dd { margin: 0; overflow-wrap: anywhere; }
+
+  /* ── table of contents ──────────────────────────────────────── */
+  .mdrfc-toc { font-size: 0.92em; }
+  html[data-toc="off"] .mdrfc-toc { display: none; }
+  .mdrfc-toc-head {
+    color: var(--muted); font-size: 11px; text-transform: uppercase;
+    letter-spacing: .06em; margin-bottom: .5em;
+  }
+  .mdrfc-toc-list { list-style: none; margin: 0; padding: 0; }
+  .mdrfc-toc-list li { margin: .1em 0; }
+  .mdrfc-toc-list .lvl-1 { padding-left: 1.3em; }
+  .mdrfc-toc-list .lvl-2 { padding-left: 2.6em; }
+  .mdrfc-toc-list .lvl-3 { padding-left: 3.9em; }
+  .mdrfc-toc a {
+    display: block; padding: 1px 4px; border-radius: 3px;
+    color: var(--fg); text-decoration: none;
+  }
+  .mdrfc-toc a:hover { background: var(--code-bg); color: var(--link); }
+  .mdrfc-toc a.active { color: var(--link); font-weight: 600; }
+
+  /* top: a block of its own, between the metadata and the document */
+  html[data-toc="top"] .mdrfc-toc {
+    margin: 0 0 1.6em; padding: 0 0 1em;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* margin: out of the flow, beside the column, at coordinates the placement
+     script measures. Held invisible until it has, so it is never painted at
+     the fallback position first. */
+  html[data-toc="left"] .mdrfc-toc,
+  html[data-toc="right"] .mdrfc-toc {
+    position: fixed; top: 56px; left: var(--toc-x, 12px);
+    width: var(--toc-w, 240px);
+    max-height: calc(100vh - 76px);
+    overflow-y: auto; overscroll-behavior: contain;
+    visibility: hidden;
+  }
+  html.mdrfc-toc-placed[data-toc="left"] .mdrfc-toc,
+  html.mdrfc-toc-placed[data-toc="right"] .mdrfc-toc { visibility: visible; }
+  /* one line per entry out there — the width is the document's to spend */
+  html[data-toc="left"] .mdrfc-toc a,
+  html[data-toc="right"] .mdrfc-toc a {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
 
   /* ── filetree sidebar (directory mode) ──────────────────────── */
   .mdrfc-sidebar {
@@ -711,7 +1127,7 @@ function htmlTemplate(
     padding: 0 4px; margin-right: 3px;
   }
 </style>
-${sidebarBootScript}
+${bootScript}
 </head>
 <body${sidebar ? ' class="mdrfc-has-sidebar"' : ""}>
 ${sidebar}<main>
@@ -745,6 +1161,22 @@ ${body}
     </div>
   </div>
   <div class="row">
+    <label for="mdrfc-toc-mode" title="A margin falls back to the top of the document when the window is too narrow for it">Table of contents</label>
+    <select id="mdrfc-toc-mode">
+      <option value="off">Off</option>
+      <option value="top">Top of document</option>
+      <option value="left">Left margin</option>
+      <option value="right">Right margin</option>
+    </select>
+  </div>
+  <div class="row">
+    <label for="mdrfc-width">Content width <span id="mdrfc-width-val"></span></label>
+    <div class="size-row">
+      <input id="mdrfc-width" type="range" min="40" max="200" step="1" value="${width}">
+      <input id="mdrfc-width-num" type="number" min="40" max="200" step="1" value="${width}" style="width:58px">
+    </div>
+  </div>
+  <div class="row">
     <button type="button" class="act" id="mdrfc-reset">Reset to defaults</button>
   </div>
 </div>
@@ -756,6 +1188,8 @@ ${reloadScript}
 (function(){
   var K = "mdrfc.";
   var SERV_THEME = ${JSON.stringify(theme)};
+  var SERV_WIDTH = ${width};
+  var SERV_TOC = ${JSON.stringify(tocMode)};
   var root = document.documentElement;
   var gear = document.getElementById("mdrfc-gear");
   var panel = document.getElementById("mdrfc-panel");
@@ -767,6 +1201,10 @@ ${reloadScript}
   var sizeRange = document.getElementById("mdrfc-size");
   var sizeNum = document.getElementById("mdrfc-size-num");
   var sizeVal = document.getElementById("mdrfc-size-val");
+  var widthRange = document.getElementById("mdrfc-width");
+  var widthNum = document.getElementById("mdrfc-width-num");
+  var widthVal = document.getElementById("mdrfc-width-val");
+  var tocSel = document.getElementById("mdrfc-toc-mode");
   var resetBtn = document.getElementById("mdrfc-reset");
 
   function rd(k, d){ try{ var v = localStorage.getItem(K+k); return v==null?d:v; }catch(e){ return d; } }
@@ -788,6 +1226,19 @@ ${reloadScript}
     sizeRange.value = s || 14;
     sizeNum.value = s || 14;
   }
+  function applyWidth(w){
+    if(!w){ root.style.removeProperty("--content-w"); widthVal.textContent = ""; }
+    else { root.style.setProperty("--content-w", w+"ch"); widthVal.textContent = "("+w+" cols)"; }
+  }
+  // The server's --width is the default: landing back on it clears the override
+  // instead of pinning the column to whatever this run happened to start with.
+  function setWidth(w, syncNum){
+    w = Math.min(200, Math.max(40, w));
+    widthRange.value = w;
+    if(syncNum) widthNum.value = w;
+    if(w === SERV_WIDTH){ rm("width"); applyWidth(""); }
+    else { applyWidth(w); wr("width", String(w)); }
+  }
 
   // init
   var t = rd("theme", SERV_THEME || "auto");
@@ -800,6 +1251,15 @@ ${reloadScript}
 
   var s = rd("size", "");
   if(s) applySize(s); else { sizeRange.value = 14; sizeNum.value = 14; }
+
+  var cw = parseInt(rd("width", ""), 10) || SERV_WIDTH;
+  widthRange.value = cw;
+  widthNum.value = cw;
+  if(cw !== SERV_WIDTH) applyWidth(cw);
+
+  // The placement script has already applied this; the panel only shows it.
+  var tm = rd("toc", SERV_TOC);
+  tocSel.value = ${TOC_MODE_RE}.test(tm) ? tm : SERV_TOC;
 
   // events
   themeSel.addEventListener("change", function(){
@@ -827,8 +1287,25 @@ ${reloadScript}
     if(v && v!=="14"){ applySize(v); wr("size", String(v)); }
     else { rm("size"); applySize(""); }
   });
+  widthRange.addEventListener("input", function(){
+    setWidth(parseInt(widthRange.value, 10), true);
+  });
+  // A partial or out-of-range typed value waits for blur rather than being
+  // clamped mid-keystroke.
+  widthNum.addEventListener("input", function(){
+    var v = parseInt(widthNum.value, 10);
+    if(v >= 40 && v <= 200) setWidth(v, false);
+  });
+  widthNum.addEventListener("change", function(){
+    setWidth(parseInt(widthNum.value, 10) || SERV_WIDTH, true);
+  });
+  tocSel.addEventListener("change", function(){
+    var v = tocSel.value;
+    if(v === SERV_TOC) rm("toc"); else wr("toc", v);
+    if(window.mdrfcToc) window.mdrfcToc.apply(v);
+  });
   resetBtn.addEventListener("click", function(){
-    rm("theme"); rm("font"); rm("size");
+    rm("theme"); rm("font"); rm("size"); rm("width"); rm("toc");
     location.reload();
   });
 
@@ -992,6 +1469,15 @@ ${reloadScript}
 (function(){
   // Delegated so blocks swapped in by in-place navigation keep working.
   document.addEventListener("click", function(e){
+    var anchor = e.target.closest && e.target.closest(".mdrfc-anchor");
+    if(anchor){
+      // The jump is the browser's own; copying the URL is the part worth
+      // having, since the address bar is what people would reach for next.
+      write(new URL(anchor.getAttribute("href"), location.href).href)
+        .then(function(){ tick(anchor); })
+        .catch(function(){});
+      return;
+    }
     var btn = e.target.closest && e.target.closest(".mdrfc-code-btn");
     if(!btn) return;
     var box = btn.closest(".mdrfc-code");
@@ -1028,6 +1514,17 @@ ${reloadScript}
     });
   }
 
+  // The permalink handle has no text to swap, so the tick rides on an
+  // attribute the stylesheet reads.
+  function tick(a){
+    if(a.dataset.busy) clearTimeout(Number(a.dataset.busy));
+    a.dataset.copied = "1";
+    a.dataset.busy = String(setTimeout(function(){
+      delete a.dataset.copied;
+      delete a.dataset.busy;
+    }, 1200));
+  }
+
   function flash(btn, msg){
     if(btn.dataset.busy) clearTimeout(Number(btn.dataset.busy));
     btn.textContent = msg;
@@ -1038,6 +1535,8 @@ ${reloadScript}
   }
 })();
 </script>
+${scrollScript}
+${tocScript}
 ${sidebarScript}
 </body>
 </html>`;

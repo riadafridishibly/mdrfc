@@ -5,14 +5,16 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 /**
- * The palette imports its runtime from "/_preact.js", the URL the server
- * exposes the bundle at. Rewrite that one specifier to the package so the
- * real module can be imported here — everything else is loaded verbatim.
+ * The palette imports from "/_preact.js" and "/_highlight.js", the URLs the
+ * server exposes those modules at. Rewrite those two specifiers to real paths
+ * so the module can be imported here — everything else is loaded verbatim.
  */
 async function loadPalette() {
   const runtime = resolve("node_modules/htm/preact/standalone.module.js");
   const src = await Bun.file("src/client/palette.js").text();
-  const patched = src.replace('from "/_preact.js"', `from ${JSON.stringify(runtime)}`);
+  const patched = src
+    .replace('from "/_preact.js"', `from ${JSON.stringify(runtime)}`)
+    .replace('from "/_highlight.js"', `from ${JSON.stringify(resolve("src/client/highlight.js"))}`);
   const file = join(mkdtempSync(join(tmpdir(), "mdrfc-palette-")), "palette.js");
   writeFileSync(file, patched);
   await import(file);

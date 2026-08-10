@@ -52,6 +52,7 @@ FLAGS
       --no-frontmatter      hide the frontmatter block (still stripped from body)
       --width <n>           content width in columns (default 72)
       --theme <auto|light|dark>  web color scheme (default auto)
+      --toc <off|top|left|right> web table of contents (default top)
   -h, --help                show this help
   -V, --version             show version
 ```
@@ -61,6 +62,9 @@ FLAGS
 Default width is **72 columns**, the long-standing RFC line-length convention. Both the terminal and web views share it.
 
 - Override per-run: `mdrfc README.md --width 80`
+- In the web view, the settings panel has a **Content width** slider (40–200
+  columns), remembered per browser. `--width` is its default; sliding back to
+  that value clears the override.
 - Pure plain-text RFC look (no color): `mdrfc README.md --no-color`
 
 ## Frontmatter
@@ -121,6 +125,61 @@ Give `mdrfc` a **directory** and it scans for `*.md` files (hidden files,
 mdrfc docs/ --web
 ```
 
+## Heading links
+
+Every heading gets a slug id and a `#` handle after its text, faint until you
+hover the heading. Clicking it jumps to that section *and* copies the section's
+full URL, so linking someone to one part of a long document doesn't mean
+hand-assembling the fragment.
+
+The handle draws its `#` from CSS rather than holding text, so heading text
+stays exactly what the markdown said — which is what the page title and the
+search highlighter read.
+
+Slugs are GitHub's, so a link written against the same document rendered
+there lands on the same heading here. That means punctuation leaves the
+spaces beside it behind — `## Appendix A — go-lua gotchas` is
+`#appendix-a--go-lua-gotchas`, with two hyphens — repeated hyphens are never
+collapsed, and letters outside ASCII are kept (`#café-notes`).
+
+## Table of contents
+
+The web view lists every heading of the document, under the frontmatter block
+and above the text. Entries are indented relative to the shallowest heading
+present, so a document whose sections all start at `##` isn't listed one step
+in. A document with one heading or none gets no list.
+
+`--toc left` or `--toc right` moves the list out of the flow and into the
+margin beside the column, where it stays put as you read and lights the
+section you are in. There is room for it because the text stops at 72
+columns — the margin is space the document was never going to use.
+
+The margin is measured, not assumed: the window size, the content width, the
+font size and the filetree sidebar all move it, and when what is left is too
+thin to read a column of links in, the list returns to the top of the
+document. Widen the window and it goes back out to the margin.
+
+Placement is a **Table of contents** setting in the panel — off, top, left or
+right — remembered per browser and applied without a reload. `--toc` is its
+default; choosing that value again clears the override.
+
+## Reading position
+
+The web view remembers where you were in each document, per path. Save the
+file and live-reload puts you back at the same line; wander off to another
+file in the sidebar and come back, and it is still where you left it. The
+memory outlives the tab and the server too — stop mdrfc, start it again
+tomorrow, and a half-read document opens half-read.
+
+Anything you asked for explicitly outranks it — a `#fragment` in the URL, or
+a result opened from the palette — so the memory only decides where a plain
+visit lands.
+
+Positions live in the browser's `localStorage`, which is scoped to the
+origin, so a run that lands on a different port (2119 is taken, mdrfc takes
+2120) starts fresh. The 200 most recently read documents are kept and older
+entries are dropped.
+
 ## Search
 
 In `--web` mode, **Cmd-K** (or Ctrl-K) opens a command palette.
@@ -146,10 +205,21 @@ its extended syntax works:
 These operators only apply to paths, so a query using any of them filters files
 and skips content search.
 
+Opening a result highlights the line you picked — the whole line, as the
+palette listed it — with your query brighter inside it, and its other
+occurrences in the document faintly marked. No hunting down the line by eye.
+**Esc** clears the highlight.
+
+The listed row is markdown and the page is rendered HTML, so the two are
+matched with markup stripped and the hit's own section preferred; a row nothing
+can be matched to still highlights the heading it belongs under. Highlighting
+uses the CSS Custom Highlight API, so the markup is untouched — a browser
+without it still jumps, just without the colour.
+
 ## Settings panel
 
-The gear button in the web view opens theme, font and size controls, all
-persisted in `localStorage`.
+The gear button in the web view opens theme, font, size, content width and
+table-of-contents controls, all persisted in `localStorage`.
 
 The font field searches every family installed on the machine — fixed-pitch
 ones are tagged `mono` and sort first, since proportional text breaks the
@@ -199,6 +269,7 @@ src/
   server.ts        Bun.serve + WebSocket live-reload + file watcher + md tree
   client/
     palette.js     Cmd-K command palette (Preact + htm, served as a module)
+    highlight.js   paints the picked line + query in the document (Highlight API)
   render/
     term.ts        marked + marked-terminal renderer; dir-mode tree
     web.ts         marked HTML + CSS template + sidebar filetree

@@ -11,9 +11,11 @@ import { findFreePort, SKIP_DIRS } from "./util.ts";
 import { openBrowser } from "./open.ts";
 import { listSystemFonts } from "./fonts.ts";
 import { isExtendedQuery, search } from "./search.ts";
+import { FAVICON_PATH, FAVICON_SVG } from "./favicon.ts";
 import type { RenderOpts } from "./util.ts";
 import preactSrc from "htm/preact/standalone.module.js" with { type: "text" };
 import paletteSrc from "./client/palette.js" with { type: "text" };
+import highlightSrc from "./client/highlight.js" with { type: "text" };
 
 export interface ServerOpts extends RenderOpts {
   content: string;
@@ -168,6 +170,19 @@ export async function startServer(opts: ServerOpts): Promise<void> {
         return new Response("Upgrade required", { status: 426 });
       }
 
+      // Site icon. The `.ico` sibling is answered empty rather than left to
+      // fall through: without it, a browser that ignores the SVG link would be
+      // handed the whole document as its icon.
+      if (u.pathname === FAVICON_PATH) {
+        return new Response(FAVICON_SVG, {
+          headers: {
+            "content-type": "image/svg+xml; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        });
+      }
+      if (u.pathname === "/favicon.ico") return new Response(null, { status: 204 });
+
       // Installed font families (monospace flagged) for the settings panel
       if (u.pathname === "/_fonts") {
         return new Response(JSON.stringify(listSystemFonts()), {
@@ -180,8 +195,16 @@ export async function startServer(opts: ServerOpts): Promise<void> {
       // that only refetches the document, so these are not requested again.
       // Never cached: a viewer that live-reloads must not keep serving a stale
       // script after the binary it came from has changed underneath it.
-      if (u.pathname === "/_preact.js" || u.pathname === "/_palette.js") {
-        return new Response(u.pathname === "/_preact.js" ? preactSrc : paletteSrc, {
+      const clientModule =
+        u.pathname === "/_preact.js"
+          ? preactSrc
+          : u.pathname === "/_palette.js"
+            ? paletteSrc
+            : u.pathname === "/_highlight.js"
+              ? highlightSrc
+              : null;
+      if (clientModule !== null) {
+        return new Response(clientModule, {
           headers: {
             "content-type": "text/javascript; charset=utf-8",
             "cache-control": "no-store",
@@ -237,8 +260,15 @@ export async function startServer(opts: ServerOpts): Promise<void> {
 
   const fileLabel = opts.source ? ` ${opts.source}` : " (stdin)";
   const reloadLabel = opts.source ? " · live-reload on" : "";
-  console.error(`mdrfc serving${fileLabel} at ${url}${reloadLabel}`);
-  console.error(`press Ctrl-C to stop`);
+  // The banner goes to stderr so stdout stays pipe-clean. Written directly
+  // rather than via console.error, which Bun paints red — this is status, not
+  // an error.
+  const color = process.stderr.isTTY;
+  const green = color ? "\x1b[32m" : "";
+  const dim = color ? "\x1b[2m" : "";
+  const reset = color ? "\x1b[0m" : "";
+  process.stderr.write(`${green}mdrfc serving${fileLabel} at ${url}${reloadLabel}${reset}\n`);
+  process.stderr.write(`${dim}press Ctrl-C to stop${reset}\n`);
 
   if (opts.open) openBrowser(url);
 

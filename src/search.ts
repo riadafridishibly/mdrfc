@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, relative as pathRelative, resolve as pathResolve } from "node:path";
 import { Fzf, extendedMatch } from "fzf";
 import { SKIP_DIRS, slugifyHeading } from "./util.ts";
+import { parseFrontmatter } from "./frontmatter.ts";
 
 export type HitKind = "file" | "heading" | "text";
 
@@ -87,16 +88,39 @@ function readCached(abs: string): string | null {
 
 /**
  * Strip the inline markdown that would not survive rendering, so a slug built
- * from source heading text matches the id emitted into the HTML.
+ * from source heading text matches the id emitted into the HTML. An image
+ * leaves nothing behind: its alt text is an attribute, not text the slug or
+ * the rendered line ever shows.
  */
 function stripInlineMd(s: string): string {
   return s
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/`([^`]*)`/g, "$1")
     .replace(/(\*\*|__)(.*?)\1/g, "$2")
     .replace(/(\*|_)(.*?)\1/g, "$2")
     .trim();
+}
+
+const SETEXT_UNDERLINE = /^ {0,3}(=+|-+) *$/;
+const BLOCK_START = /^ {0,3}(?:[-*+>#]|\d+[.)]|```|~~~|\||=)/;
+
+/**
+ * The heading at `i`, ATX (`## Title`) or setext (`Title` over `===`).
+ * A setext underline under more than one line of paragraph heads the whole
+ * paragraph, which this line-at-a-time scan cannot reconstruct, so those are
+ * left alone rather than anchored wrongly.
+ */
+function headingAt(lines: string[], i: number): { level: number; text: string } | null {
+  const atx = /^(#{1,6})\s+(.*)$/.exec(lines[i]!);
+  if (atx) return { level: atx[1]!.length, text: atx[2]! };
+
+  const under = SETEXT_UNDERLINE.exec(lines[i + 1] ?? "");
+  const line = lines[i]!;
+  if (!under || !line.trim() || BLOCK_START.test(line)) return null;
+  const above = lines[i - 1];
+  if (above && above.trim() && !BLOCK_START.test(above)) return null;
+  return { level: under[1]!.startsWith("=") ? 1 : 2, text: line.trim() };
 }
 
 interface Entry {
@@ -220,6 +244,10 @@ export function search(base: string, query: string): SearchHit[] {
 
     const lines = content.split("\n");
     let fenced = false;
+    // Frontmatter never reaches the renderer as markdown, so `title: x` over
+    // the closing `---` is not the setext heading it looks like.
+    const body = content.length - parseFrontmatter(content).content.length;
+    const fmLines = body ? content.slice(0, body).split("\n").length - 1 : 0;
     let currentAnchor: string | undefined;
     const slugSeen = new Map<string, number>();
     let perFile = 0;
@@ -231,10 +259,9 @@ export function search(base: string, query: string): SearchHit[] {
         fenced = !fenced;
         continue;
       }
-
-      const h = !fenced && /^(#{1,6})\s+(.*)$/.exec(line);
+      const h = fenced || i < fmLines ? null : headingAt(lines, i);
       if (h) {
-        const raw = stripInlineMd(h[2]);
+        const raw = stripInlineMd(h.text);
         const base_ = slugifyHeading(raw);
         const n = slugSeen.get(base_) ?? 0;
         slugSeen.set(base_, n + 1);
@@ -250,7 +277,7 @@ export function search(base: string, query: string): SearchHit[] {
             text: raw,
             anchor: currentAnchor,
             // Shallower headings rank higher; exact-prefix matches higher still.
-            score: 60 - h[1].length * 4 + (m.at === 0 ? 10 : 0),
+            score: 60 - h.level * 4 + (m.at === 0 ? 10 : 0),
             range: [m.at, m.len],
           });
         }
