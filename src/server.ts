@@ -260,8 +260,15 @@ export async function startServer(opts: ServerOpts): Promise<void> {
 
   const fileLabel = opts.source ? ` ${opts.source}` : " (stdin)";
   const reloadLabel = opts.source ? " · live-reload on" : "";
-  console.error(`mdrfc serving${fileLabel} at ${url}${reloadLabel}`);
-  console.error(`press Ctrl-C to stop`);
+  // The banner goes to stderr so stdout stays pipe-clean. Written directly
+  // rather than via console.error, which Bun paints red — this is status, not
+  // an error.
+  const color = process.stderr.isTTY;
+  const green = color ? "\x1b[32m" : "";
+  const dim = color ? "\x1b[2m" : "";
+  const reset = color ? "\x1b[0m" : "";
+  process.stderr.write(`${green}mdrfc serving${fileLabel} at ${url}${reloadLabel}${reset}\n`);
+  process.stderr.write(`${dim}press Ctrl-C to stop${reset}\n`);
 
   if (opts.open) openBrowser(url);
 
