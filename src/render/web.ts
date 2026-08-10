@@ -1,5 +1,12 @@
 import { Marked } from "marked";
-import { decodeEntities, slugifyHeading, type RenderOpts, type Theme } from "../util.ts";
+import {
+  DEFAULT_TOC,
+  decodeEntities,
+  slugifyHeading,
+  type RenderOpts,
+  type Theme,
+  type TocMode,
+} from "../util.ts";
 import { FAVICON_PATH } from "../favicon.ts";
 import {
   flattenFrontmatter,
@@ -53,6 +60,52 @@ function renderSidebar(tree: TreeNode, currentRel: string): string {
 <div id="mdrfc-resizer" class="mdrfc-resizer" role="separator" aria-orientation="vertical" aria-label="Resize file list" title="Drag to resize · double-click to reset"></div>`;
 }
 
+interface Heading {
+  level: number;
+  id: string;
+  /** Heading text, still escaped as marked emitted it, inline markup dropped. */
+  text: string;
+}
+
+/** The body's headings, in document order, as the anchor pass left them. */
+function extractHeadings(html: string): Heading[] {
+  const out: Heading[] = [];
+  const re = /<h([1-6]) id="([^"]*)">([\s\S]*?)<\/h\1>/g;
+  for (let m = re.exec(html); m; m = re.exec(html)) {
+    const text = m[3]!.replace(/<[^>]+>/g, "").trim();
+    if (text) out.push({ level: Number(m[1]), id: m[2]!, text });
+  }
+  return out;
+}
+
+/** A document with one heading or none has nothing worth listing. */
+const MIN_TOC_HEADINGS = 2;
+
+/**
+ * Build the table of contents from the body's own headings.
+ * Indentation is relative to the shallowest heading present, so a document
+ * whose sections all start at h2 isn't listed one step in, and clamped so a
+ * deeply nested tail still fits a margin column.
+ *
+ * The markup ships whatever the placement setting says: hiding it, or moving
+ * it to a margin, is the stylesheet's job, so the reader can switch placement
+ * without the page being rendered again.
+ */
+function renderTocHtml(headings: Heading[]): string {
+  if (headings.length < MIN_TOC_HEADINGS) return "";
+  const base = Math.min(...headings.map((h) => h.level));
+  const items = headings
+    .map((h) => {
+      const depth = Math.min(h.level - base, 3);
+      return `<li class="lvl-${depth}"><a href="#${h.id}">${h.text}</a></li>`;
+    })
+    .join("");
+  return (
+    `<nav id="mdrfc-toc" class="mdrfc-toc mdrfc-scroll" aria-label="Table of contents">` +
+    `<div class="mdrfc-toc-head">Contents</div><ol class="mdrfc-toc-list">${items}</ol></nav>`
+  );
+}
+
 /** Render frontmatter as a definition-list metadata block above the document. */
 function renderFrontmatterHtml(data: Record<string, FmValue>): string {
   const pairs = flattenFrontmatter(data);
@@ -67,10 +120,11 @@ function renderFrontmatterHtml(data: Record<string, FmValue>): string {
  * Render markdown → standalone HTML.
  * RFC-style: monospace, 72ch max content width, centered.
  * Frontmatter is stripped from the body, shown as a metadata block (unless
- * disabled) and its `title` becomes the document title.
+ * disabled) and its `title` becomes the document title. A table of contents
+ * follows it, placed at the top of the document or in either margin.
  * Injects a tiny WebSocket client for live-reload when `reloadToken` is set,
- * and a settings panel (theme / searchable font picker / size / content width)
- * persisted in localStorage.
+ * and a settings panel (theme / searchable font picker / size / content width /
+ * contents placement) persisted in localStorage.
  * `tree` (directory mode) adds a fixed sidebar listing every .md file.
  */
 export function renderWeb(
@@ -86,16 +140,18 @@ export function renderWeb(
     addHeadingAnchors(marked.parse(fm.content) as string)
   );
   const meta = opts.frontmatter ? renderFrontmatterHtml(fm.data) : "";
+  const toc = renderTocHtml(extractHeadings(body));
   const theme = opts.theme;
   const sidebar = tree ? renderSidebar(tree, currentRel ?? "") : "";
   return htmlTemplate(
-    meta + openExternalLinksInNewTab(body),
+    meta + toc + openExternalLinksInNewTab(body),
     opts.width,
     theme,
     reloadToken,
     sidebar,
     documentTitle(fm.data, body, currentRel || opts.source),
-    opts.dirMode === true
+    opts.dirMode === true,
+    opts.toc ?? DEFAULT_TOC
   );
 }
 
@@ -197,7 +253,8 @@ function htmlTemplate(
   reloadToken?: string,
   sidebar = "",
   docTitle?: string,
-  dirMode = false
+  dirMode = false,
+  tocMode: TocMode = DEFAULT_TOC
 ): string {
   const reloadScript = reloadToken
     ? `<script>
@@ -224,12 +281,21 @@ function htmlTemplate(
     if(window.matchMedia("(max-width: 720px)").matches) collapsed = true;
     if(collapsed) root.classList.add("mdrfc-sidebar-collapsed");`
     : "";
+  // The margin needs a window wide enough to hold a column beside the text.
+  // Measuring that needs a laid-out document, so this coarse test stands in
+  // until the placement script can measure — a fallback settled after the
+  // first paint would otherwise shove the document down as it landed.
   const bootScript = `<script>
 (function(){
   try {
     var root = document.documentElement;
     var cw = parseInt(localStorage.getItem("mdrfc.width"), 10);
-    if(cw) root.style.setProperty("--content-w", cw+"ch");${sidebarBoot}
+    if(cw) root.style.setProperty("--content-w", cw+"ch");
+    var toc = localStorage.getItem("mdrfc.toc");
+    if(toc && /^(off|top|left|right)$/.test(toc)){
+      if(toc !== "off" && toc !== "top" && !window.matchMedia("(min-width: 1100px)").matches) toc = "top";
+      root.setAttribute("data-toc", toc);
+    }${sidebarBoot}
   } catch(e){}
 })();
 </script>`;
@@ -316,6 +382,129 @@ function htmlTemplate(
   // under it. Repeat once everything has settled — unless the reader has
   // meanwhile scrolled somewhere of their own choosing.
   window.addEventListener("load", function(){ if(!touched) restore(); });
+})();
+</script>`;
+
+  // Table of contents: placement and section tracking. The list itself is in
+  // the document already; this decides where it sits and which entry is lit.
+  const tocScript = `<script>
+(function(){
+  var root = document.documentElement;
+  var SERV = ${JSON.stringify(tocMode)};
+  var MODES = /^(off|top|left|right)$/;
+  var MIN_W = 190;   // narrower than this a margin column reads as a scrap
+  var MAX_W = 300;
+  var GAP = 24;      // clear space between the column and the document
+  var EDGE = 12;     // and between the column and the window, when pushed out
+  var SPY = 84;      // a heading above this line counts as the section in view
+
+  var mode = SERV, toc = null, links = [], targets = [], current = -1;
+  var lastW = -1, lastX = -1;
+
+  function stored(){ try{ return localStorage.getItem("mdrfc.toc"); }catch(e){ return null; } }
+
+  /**
+   * Put the list where the setting asks for, if it fits. A margin column is
+   * measured against the space actually left beside the text — which the
+   * window size, the content width, the font size and the filetree all move —
+   * and gives way to the top of the document when that space runs out.
+   */
+  function place(){
+    var main = document.querySelector("main");
+    if(!main) return;
+    var rect = main.getBoundingClientRect();
+    lastW = rect.width;
+    lastX = rect.left;
+    root.classList.remove("mdrfc-toc-placed");
+    if(!toc || mode === "off" || mode === "top"){ root.setAttribute("data-toc", mode); return; }
+    var vw = root.clientWidth;
+    var aside = document.getElementById("mdrfc-sidebar");
+    var blocked = aside && !root.classList.contains("mdrfc-sidebar-collapsed")
+      ? aside.getBoundingClientRect().right : 0;
+    var room = mode === "left" ? rect.left - blocked : vw - rect.right;
+    if(room < MIN_W + GAP){ root.setAttribute("data-toc", "top"); return; }
+    var w = Math.min(MAX_W, room - GAP);
+    var x = mode === "left"
+      ? Math.max(blocked + EDGE, rect.left - GAP - w)
+      : Math.min(vw - EDGE - w, rect.right + GAP);
+    root.style.setProperty("--toc-w", Math.round(w) + "px");
+    root.style.setProperty("--toc-x", Math.round(x) + "px");
+    root.setAttribute("data-toc", mode);
+    root.classList.add("mdrfc-toc-placed");
+  }
+
+  function index(){
+    toc = document.getElementById("mdrfc-toc");
+    links = []; targets = []; current = -1;
+    if(!toc) return;
+    Array.prototype.forEach.call(toc.querySelectorAll("a"), function(a){
+      a.classList.remove("active");   // nothing is lit until the spy says so
+      var href = a.getAttribute("href") || "";
+      var el = href.charAt(0) === "#" ? document.getElementById(decodeURIComponent(href.slice(1))) : null;
+      if(el){ links.push(a); targets.push(el); }
+    });
+  }
+
+  // Keep the lit entry in view when the column scrolls on its own. Done by
+  // hand: scrollIntoView would take the document along with it.
+  function reveal(a){
+    if(!toc || toc.scrollHeight <= toc.clientHeight) return;
+    var top = a.offsetTop, bottom = top + a.offsetHeight;
+    if(top < toc.scrollTop) toc.scrollTop = top - 8;
+    else if(bottom > toc.scrollTop + toc.clientHeight) toc.scrollTop = bottom - toc.clientHeight + 8;
+  }
+
+  // The section being read is the last heading to have passed the top of the
+  // window; before any has, it is the first.
+  function spy(){
+    if(!links.length || root.getAttribute("data-toc") === "off") return;
+    var i = 0;
+    for(var k = 0; k < targets.length; k++){
+      if(targets[k].getBoundingClientRect().top > SPY) break;
+      i = k;
+    }
+    if(i === current) return;
+    if(links[current]) links[current].classList.remove("active");
+    current = i;
+    links[i].classList.add("active");
+    reveal(links[i]);
+  }
+
+  function apply(next){
+    mode = MODES.test(next) ? next : SERV;
+    place();
+    spy();
+  }
+
+  window.mdrfcToc = {
+    apply: apply,
+    // A document swapped in place brings its own list with it.
+    refresh: function(){ index(); place(); spy(); }
+  };
+
+  index();
+  apply(stored() || SERV);
+
+  var pending = 0;
+  window.addEventListener("scroll", function(){
+    if(pending) return;
+    pending = requestAnimationFrame(function(){ pending = 0; spy(); });
+  }, { passive: true });
+  window.addEventListener("resize", place);
+  // The column also moves when the filetree opens or the reader changes the
+  // font size or content width. Width and offset are what matter; measuring
+  // again on every height change would chase the list's own placement.
+  if(window.ResizeObserver){
+    var ro = new ResizeObserver(function(){
+      var main = document.querySelector("main");
+      if(!main) return;
+      var r = main.getBoundingClientRect();
+      if(r.width !== lastW || r.left !== lastX) place();
+    });
+    ro.observe(document.body);
+    var el = document.querySelector("main");
+    if(el) ro.observe(el);
+  }
 })();
 </script>`;
 
@@ -433,6 +622,7 @@ function htmlTemplate(
     var target = hash ? document.getElementById(decodeURIComponent(hash.slice(1))) : null;
     if(target) target.scrollIntoView();
     else if(!window.mdrfcScroll.restore(url)) window.scrollTo(0, 0);
+    if(window.mdrfcToc) window.mdrfcToc.refresh();
   }
   // Exposed so the command palette can reuse in-place navigation. Resolves
   // once the new document is in the DOM, which is when the palette paints its
@@ -466,7 +656,7 @@ function htmlTemplate(
     : "";
 
   return `<!doctype html>
-<html lang="en"${htmlThemeAttr}>
+<html lang="en"${htmlThemeAttr} data-toc="${tocMode}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -632,6 +822,50 @@ function htmlTemplate(
   .mdrfc-fm dt { color: var(--muted); }
   .mdrfc-fm dt::after { content: ":"; }
   .mdrfc-fm dd { margin: 0; overflow-wrap: anywhere; }
+
+  /* ── table of contents ──────────────────────────────────────── */
+  .mdrfc-toc { font-size: 0.92em; }
+  html[data-toc="off"] .mdrfc-toc { display: none; }
+  .mdrfc-toc-head {
+    color: var(--muted); font-size: 11px; text-transform: uppercase;
+    letter-spacing: .06em; margin-bottom: .5em;
+  }
+  .mdrfc-toc-list { list-style: none; margin: 0; padding: 0; }
+  .mdrfc-toc-list li { margin: .1em 0; }
+  .mdrfc-toc-list .lvl-1 { padding-left: 1.3em; }
+  .mdrfc-toc-list .lvl-2 { padding-left: 2.6em; }
+  .mdrfc-toc-list .lvl-3 { padding-left: 3.9em; }
+  .mdrfc-toc a {
+    display: block; padding: 1px 4px; border-radius: 3px;
+    color: var(--fg); text-decoration: none;
+  }
+  .mdrfc-toc a:hover { background: var(--code-bg); color: var(--link); }
+  .mdrfc-toc a.active { color: var(--link); font-weight: 600; }
+
+  /* top: a block of its own, between the metadata and the document */
+  html[data-toc="top"] .mdrfc-toc {
+    margin: 0 0 1.6em; padding: 0 0 1em;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* margin: out of the flow, beside the column, at coordinates the placement
+     script measures. Held invisible until it has, so it is never painted at
+     the fallback position first. */
+  html[data-toc="left"] .mdrfc-toc,
+  html[data-toc="right"] .mdrfc-toc {
+    position: fixed; top: 56px; left: var(--toc-x, 12px);
+    width: var(--toc-w, 240px);
+    max-height: calc(100vh - 76px);
+    overflow-y: auto; overscroll-behavior: contain;
+    visibility: hidden;
+  }
+  html.mdrfc-toc-placed[data-toc="left"] .mdrfc-toc,
+  html.mdrfc-toc-placed[data-toc="right"] .mdrfc-toc { visibility: visible; }
+  /* one line per entry out there — the width is the document's to spend */
+  html[data-toc="left"] .mdrfc-toc a,
+  html[data-toc="right"] .mdrfc-toc a {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
 
   /* ── filetree sidebar (directory mode) ──────────────────────── */
   .mdrfc-sidebar {
@@ -886,6 +1120,15 @@ ${body}
     </div>
   </div>
   <div class="row">
+    <label for="mdrfc-toc-mode" title="A margin falls back to the top of the document when the window is too narrow for it">Table of contents</label>
+    <select id="mdrfc-toc-mode">
+      <option value="off">Off</option>
+      <option value="top">Top of document</option>
+      <option value="left">Left margin</option>
+      <option value="right">Right margin</option>
+    </select>
+  </div>
+  <div class="row">
     <label for="mdrfc-width">Content width <span id="mdrfc-width-val"></span></label>
     <div class="size-row">
       <input id="mdrfc-width" type="range" min="40" max="200" step="1" value="${width}">
@@ -905,6 +1148,7 @@ ${reloadScript}
   var K = "mdrfc.";
   var SERV_THEME = ${JSON.stringify(theme)};
   var SERV_WIDTH = ${width};
+  var SERV_TOC = ${JSON.stringify(tocMode)};
   var root = document.documentElement;
   var gear = document.getElementById("mdrfc-gear");
   var panel = document.getElementById("mdrfc-panel");
@@ -919,6 +1163,7 @@ ${reloadScript}
   var widthRange = document.getElementById("mdrfc-width");
   var widthNum = document.getElementById("mdrfc-width-num");
   var widthVal = document.getElementById("mdrfc-width-val");
+  var tocSel = document.getElementById("mdrfc-toc-mode");
   var resetBtn = document.getElementById("mdrfc-reset");
 
   function rd(k, d){ try{ var v = localStorage.getItem(K+k); return v==null?d:v; }catch(e){ return d; } }
@@ -971,6 +1216,10 @@ ${reloadScript}
   widthNum.value = cw;
   if(cw !== SERV_WIDTH) applyWidth(cw);
 
+  // The placement script has already applied this; the panel only shows it.
+  var tm = rd("toc", SERV_TOC);
+  tocSel.value = /^(off|top|left|right)$/.test(tm) ? tm : SERV_TOC;
+
   // events
   themeSel.addEventListener("change", function(){
     setTheme(themeSel.value); wr("theme", themeSel.value);
@@ -1009,8 +1258,13 @@ ${reloadScript}
   widthNum.addEventListener("change", function(){
     setWidth(parseInt(widthNum.value, 10) || SERV_WIDTH, true);
   });
+  tocSel.addEventListener("change", function(){
+    var v = tocSel.value;
+    if(v === SERV_TOC) rm("toc"); else wr("toc", v);
+    if(window.mdrfcToc) window.mdrfcToc.apply(v);
+  });
   resetBtn.addEventListener("click", function(){
-    rm("theme"); rm("font"); rm("size"); rm("width");
+    rm("theme"); rm("font"); rm("size"); rm("width"); rm("toc");
     location.reload();
   });
 
@@ -1241,6 +1495,7 @@ ${reloadScript}
 })();
 </script>
 ${scrollScript}
+${tocScript}
 ${sidebarScript}
 </body>
 </html>`;

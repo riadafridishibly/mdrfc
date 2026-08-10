@@ -52,6 +52,7 @@ FLAGS
       --no-frontmatter      hide the frontmatter block (still stripped from body)
       --width <n>           content width in columns (default 72)
       --theme <auto|light|dark>  web color scheme (default auto)
+      --toc <off|top|left|right> web table of contents (default top)
   -h, --help                show this help
   -V, --version             show version
 ```
@@ -141,6 +142,27 @@ spaces beside it behind — `## Appendix A — go-lua gotchas` is
 `#appendix-a--go-lua-gotchas`, with two hyphens — repeated hyphens are never
 collapsed, and letters outside ASCII are kept (`#café-notes`).
 
+## Table of contents
+
+The web view lists every heading of the document, under the frontmatter block
+and above the text. Entries are indented relative to the shallowest heading
+present, so a document whose sections all start at `##` isn't listed one step
+in. A document with one heading or none gets no list.
+
+`--toc left` or `--toc right` moves the list out of the flow and into the
+margin beside the column, where it stays put as you read and lights the
+section you are in. There is room for it because the text stops at 72
+columns — the margin is space the document was never going to use.
+
+The margin is measured, not assumed: the window size, the content width, the
+font size and the filetree sidebar all move it, and when what is left is too
+thin to read a column of links in, the list returns to the top of the
+document. Widen the window and it goes back out to the margin.
+
+Placement is a **Table of contents** setting in the panel — off, top, left or
+right — remembered per browser and applied without a reload. `--toc` is its
+default; choosing that value again clears the override.
+
 ## Reading position
 
 The web view remembers where you were in each document, per path. Save the
@@ -196,8 +218,8 @@ without it still jumps, just without the colour.
 
 ## Settings panel
 
-The gear button in the web view opens theme, font and size controls, all
-persisted in `localStorage`.
+The gear button in the web view opens theme, font, size, content width and
+table-of-contents controls, all persisted in `localStorage`.
 
 The font field searches every family installed on the machine — fixed-pitch
 ones are tagged `mono` and sort first, since proportional text breaks the

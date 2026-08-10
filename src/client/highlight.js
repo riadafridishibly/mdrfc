@@ -41,11 +41,15 @@ export function contentTerms(query) {
     .filter(Boolean);
 }
 
-/** Every text node under `root`, flattened into one string plus an offset index. */
+/**
+ * Every text node under `root`, flattened into one string plus an offset index.
+ * The table of contents is skipped: it repeats every heading, so painting it
+ * would double each hit and let a match land on the list instead of the text.
+ */
 function textMap(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: (n) =>
-      n.parentElement && n.parentElement.closest("script, style")
+      n.parentElement && n.parentElement.closest("script, style, .mdrfc-toc")
         ? NodeFilter.FILTER_REJECT
         : NodeFilter.FILTER_ACCEPT,
   });

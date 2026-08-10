@@ -3,15 +3,31 @@ import net from "node:net";
 
 export type Theme = "auto" | "light" | "dark";
 
+/**
+ * Where the table of contents sits (web only). `left`/`right` put it in the
+ * margin beside the column and fall back to `top` when there is no room.
+ */
+export type TocMode = "off" | "top" | "left" | "right";
+
 export interface RenderOpts {
   width: number;
   color: boolean;
   theme: Theme;
   /** Show the parsed frontmatter as a metadata header (it is stripped either way). */
   frontmatter: boolean;
+  /** Table of contents placement; the reader can override it in settings. */
+  toc?: TocMode;
 }
 
 export const RFC_WIDTH = 72;
+
+export const TOC_MODES: TocMode[] = ["off", "top", "left", "right"];
+export const DEFAULT_TOC: TocMode = "top";
+
+/** A table-of-contents placement, or the default when the name is not one. */
+export function parseTocMode(v: unknown): TocMode {
+  return TOC_MODES.includes(v as TocMode) ? (v as TocMode) : DEFAULT_TOC;
+}
 
 /** Directories skipped when scanning for markdown files. */
 export const SKIP_DIRS = new Set([

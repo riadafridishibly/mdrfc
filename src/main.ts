@@ -5,7 +5,9 @@ import { resolve as pathResolve } from "node:path";
 import { renderTerminal, renderTerminalDirectory } from "./render/term.ts";
 import { startServer } from "./server.ts";
 import {
+  DEFAULT_TOC,
   pageOutput,
+  parseTocMode,
   readStdin,
   RFC_WIDTH,
   type Theme,
@@ -35,8 +37,16 @@ FLAGS
       --no-frontmatter      hide the frontmatter block (still stripped from body)
       --width <n>           content width in columns (default ${RFC_WIDTH})
       --theme <auto|light|dark>  web color scheme (default auto)
+      --toc <off|top|left|right> web table of contents (default ${DEFAULT_TOC})
   -h, --help                show this help
   -V, --version             show version
+
+TABLE OF CONTENTS (--web)
+  Every heading is listed above the document, under the frontmatter block.
+  --toc left or --toc right moves the list into the margin beside the text,
+  where it tracks the section being read; it returns to the top of the
+  document whenever the window is too narrow to hold a margin column.
+  The settings panel changes the placement without a restart.
 
 FRONTMATTER
   A YAML (\`---\`) or TOML (\`+++\`) block at the top of the file is parsed out
@@ -85,6 +95,7 @@ async function main() {
       "no-frontmatter": { type: "boolean", default: false },
       width: { type: "string" },
       theme: { type: "string", default: "auto" },
+      toc: { type: "string", default: DEFAULT_TOC },
       help: { type: "boolean", short: "h", default: false },
       version: { type: "boolean", short: "V", default: false },
     },
@@ -147,6 +158,7 @@ async function main() {
     color: values.color && !values["no-color"],
     theme,
     frontmatter: values.frontmatter !== false && !values["no-frontmatter"],
+    toc: parseTocMode(values.toc),
   };
 
   if (values.web) {
