@@ -30,15 +30,27 @@ const SRC = scrollSource();
 /** Every position the script scrolled to, oldest first. */
 let scrolled: number[];
 
-function run(url: string) {
+/**
+ * `maxY` stands in for a document not yet as tall as it will be: the browser
+ * clamps a scroll past the bottom, so what the script asked for and where it
+ * landed part company until the images arrive.
+ */
+let maxY = Infinity;
+
+function run(url: string, height = Infinity) {
   scrolled = [];
+  maxY = height;
   history.replaceState(null, "", url);
   (window as any).scrollTo = (_x: number, y: number) => {
-    scrolled.push(y);
-    Object.defineProperty(window, "scrollY", { value: y, configurable: true });
+    const landed = Math.min(y, maxY);
+    scrolled.push(landed);
+    Object.defineProperty(window, "scrollY", { value: landed, configurable: true });
   };
   new Function(SRC)();
 }
+
+/** The document grows, as images landing after the first paint grow it. */
+const grow = (height: number) => (maxY = height);
 
 const key = (path: string) => "mdrfc.scroll:" + path;
 
@@ -128,6 +140,28 @@ describe("per-document scroll memory", () => {
     scrollTo(120);
     window.dispatchEvent(new Event("load"));
     expect(scrolled).toEqual([500, 500]);
+  });
+
+  test("a landing clamped by a short document is corrected, not read as a scroll", () => {
+    seed("/a.md", 900);
+    run("/a.md", 100); // images still missing: the page ends at 100
+    expect(scrolled).toEqual([100]);
+
+    window.dispatchEvent(new Event("scroll")); // the clamp's own scroll event
+    grow(2000);
+    window.dispatchEvent(new Event("load"));
+    expect(scrolled).toEqual([100, 900]);
+  });
+
+  test("a search hit still wins once the palette has taken its handoff", () => {
+    seed("/a.md", 900);
+    sessionStorage.setItem("mdrfc.pendingHit", '{"query":"socket"}');
+    run("/a.md");
+    expect(scrolled).toEqual([]);
+
+    sessionStorage.removeItem("mdrfc.pendingHit"); // the palette, painting the hit
+    window.dispatchEvent(new Event("load"));
+    expect(scrolled).toEqual([]);
   });
 
   test("the position is saved when the tab goes away mid-frame", () => {

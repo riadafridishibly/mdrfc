@@ -43,13 +43,15 @@ export function contentTerms(query) {
 
 /**
  * Every text node under `root`, flattened into one string plus an offset index.
- * The table of contents is skipped: it repeats every heading, so painting it
- * would double each hit and let a match land on the list instead of the text.
+ * Chrome the renderer injected is skipped — the contents list repeats every
+ * heading, and the code block toolbar reads as `wrapcopy` run into the first
+ * line of the block — so a hit is never doubled, and never lands on something
+ * the document does not say.
  */
 function textMap(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: (n) =>
-      n.parentElement && n.parentElement.closest("script, style, .mdrfc-toc")
+      n.parentElement && n.parentElement.closest("script, style, [data-mdrfc-chrome]")
         ? NodeFilter.FILTER_REJECT
         : NodeFilter.FILTER_ACCEPT,
   });
@@ -127,7 +129,7 @@ function snippetCore(snippet) {
     .replace(/^…/, "")
     .replace(/…$/, "")
     .replace(/^(?:\s*(?:[-*+]|\d+[.)]|>|#{1,6})\s+)+/, "")
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/`([^`]*)`/g, "$1")
     .replace(/(\*\*|__)(.*?)\1/g, "$2")

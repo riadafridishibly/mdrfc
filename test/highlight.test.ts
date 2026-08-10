@@ -44,6 +44,16 @@ A later line raises the socket backlog.</p>
 </main>
 `;
 
+/** The same document with the contents list and a code block's toolbar. */
+const CHROME_DOC = `
+<main>
+<nav id="mdrfc-toc" class="mdrfc-toc" data-mdrfc-chrome><ol><li><a href="#socket-tuning">Socket tuning</a></li></ol></nav>
+<h2 id="socket-tuning">Socket tuning</h2>
+<div class="mdrfc-code"><div class="mdrfc-code-tools" data-mdrfc-chrome><button>wrap</button><button>copy</button></div><pre><code>set socket timeout 30
+</code></pre></div>
+</main>
+`;
+
 const painted = (name: string): FakeHighlight | undefined =>
   (globalThis as any).CSS.highlights.get(name);
 const texts = (name: string) => (painted(name)?.ranges ?? []).map((r) => r.toString());
@@ -78,6 +88,10 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await GlobalRegistrator.unregister();
+  // The stub outlives this file otherwise, and the palette suite would decide
+  // the API is there when it is not.
+  delete (globalThis as any).Highlight;
+  delete (globalThis as any).CSS;
 });
 
 describe("search highlighting", () => {
@@ -145,6 +159,29 @@ describe("search highlighting", () => {
     for (const name of ["mdrfc-hit", "mdrfc-hit-line", "mdrfc-hit-current"]) {
       expect(painted(name)).toBeUndefined();
     }
+  });
+
+  // The contents list repeats every heading and the code toolbar's labels run
+  // straight into the first line of the block; neither is text the document
+  // says, so neither is text a hit can land on.
+  describe("chrome the renderer injected", () => {
+    beforeEach(() => {
+      document.body.innerHTML = CHROME_DOC;
+    });
+
+    test("does not join the line a hit is banded on", () => {
+      mod.highlightMatches("socket", { snippet: "set socket timeout 30" });
+      expect(only("mdrfc-hit-line")).toBe("set socket timeout 30");
+    });
+
+    test("is not itself searchable", () => {
+      expect(mod.highlightMatches("copy", {})).toBe(false);
+    });
+
+    test("does not double a heading's own hits", () => {
+      mod.highlightMatches("tuning", { anchor: "socket-tuning" });
+      expect(texts("mdrfc-hit-current")).toEqual(["tuning"]);
+    });
   });
 
   test("fzf's path operators are not searched for in prose", () => {

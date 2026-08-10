@@ -1,6 +1,7 @@
 import { Marked } from "marked";
 import {
   DEFAULT_TOC,
+  TOC_MODES,
   decodeEntities,
   slugifyHeading,
   type RenderOpts,
@@ -14,6 +15,25 @@ import {
   parseFrontmatter,
   type FmValue,
 } from "../frontmatter.ts";
+
+/** The placement names as a literal the inline scripts can test against. */
+const TOC_MODE_RE = `/^(?:${TOC_MODES.join("|")})$/`;
+
+/**
+ * The dark palette, shared by the forced theme and the OS one. Written out
+ * twice they drift, and a token that reaches only one of them paints its text
+ * the colour of its own background.
+ */
+const DARK_TOKENS = `
+    color-scheme: dark;
+    --bg: #1a1a1a; --fg: #e0e0e0; --muted: #999; --border: #444;
+    --code-bg: #2a2a2a; --link: #6cb6ff;
+    --scroll-thumb: rgba(255,255,255,.20);
+    --scroll-thumb-hover: rgba(255,255,255,.34);
+    --hit-bg: #3d3200; --hit-fg: #ffe9a3;
+    --hit-line-bg: #55450a;
+    --hit-cur-bg: #b98900; --hit-cur-fg: #1a1a1a;
+  `;
 
 export interface TreeNode {
   name: string;
@@ -101,7 +121,7 @@ function renderTocHtml(headings: Heading[]): string {
     })
     .join("");
   return (
-    `<nav id="mdrfc-toc" class="mdrfc-toc mdrfc-scroll" aria-label="Table of contents">` +
+    `<nav id="mdrfc-toc" class="mdrfc-toc mdrfc-scroll" data-mdrfc-chrome aria-label="Table of contents">` +
     `<div class="mdrfc-toc-head">Contents</div><ol class="mdrfc-toc-list">${items}</ol></nav>`
   );
 }
@@ -226,7 +246,7 @@ function addCodeBlockTools(html: string): string {
   return html.replace(
     /<pre(\s[^>]*)?>([\s\S]*?)<\/pre>/g,
     (_m, attrs: string | undefined, inner: string) =>
-      `<div class="mdrfc-code"><div class="mdrfc-code-tools">` +
+      `<div class="mdrfc-code"><div class="mdrfc-code-tools" data-mdrfc-chrome>` +
       btn("wrap", "Toggle line wrapping", ' aria-pressed="false"') +
       btn("copy", "Copy code") +
       `</div><pre${attrs ?? ""}>${inner}</pre></div>`
@@ -284,18 +304,19 @@ function htmlTemplate(
   // The margin needs a window wide enough to hold a column beside the text.
   // Measuring that needs a laid-out document, so this coarse test stands in
   // until the placement script can measure — a fallback settled after the
-  // first paint would otherwise shove the document down as it landed.
+  // first paint would otherwise shove the document down as it landed. It is
+  // the placement actually in force that gets tested, stored or served: a
+  // served margin on a narrow window paints in the wrong place otherwise.
   const bootScript = `<script>
 (function(){
   try {
     var root = document.documentElement;
     var cw = parseInt(localStorage.getItem("mdrfc.width"), 10);
     if(cw) root.style.setProperty("--content-w", cw+"ch");
-    var toc = localStorage.getItem("mdrfc.toc");
-    if(toc && /^(off|top|left|right)$/.test(toc)){
-      if(toc !== "off" && toc !== "top" && !window.matchMedia("(min-width: 1100px)").matches) toc = "top";
-      root.setAttribute("data-toc", toc);
-    }${sidebarBoot}
+    var stored = localStorage.getItem("mdrfc.toc");
+    var toc = ${TOC_MODE_RE}.test(stored) ? stored : ${JSON.stringify(tocMode)};
+    if((toc === "left" || toc === "right") && !window.matchMedia("(min-width: 1100px)").matches) toc = "top";
+    root.setAttribute("data-toc", toc);${sidebarBoot}
   } catch(e){}
 })();
 </script>`;
@@ -315,7 +336,7 @@ function htmlTemplate(
   // The handoff is one navigation wide and belongs to the tab that made it.
   function handoff(){ try{ return sessionStorage.getItem(HANDOFF); }catch(e){ return null; } }
 
-  var lastSet = -1;
+  var lastSet = -1, want = -1;
 
   // Stamped, so the pruning below has something to rank entries by.
   function save(url){
@@ -328,6 +349,16 @@ function htmlTemplate(
     try{ return JSON.parse(raw); }catch(e){ return null; }
   }
 
+  // The browser clamps to the height it has, which before the images land is
+  // short of where the reader was. Hold on to what was asked for, and take the
+  // landing — not the ask — as the mark that tells the reader's own scrolling
+  // apart from this.
+  function go(y){
+    want = y;
+    window.scrollTo(0, y);
+    lastSet = Math.round(window.scrollY);
+  }
+
   // A hash and a pending search hit are both destinations the reader just
   // asked for, so neither gives way to where this document was last left.
   // Returns whether the caller's own fallback is still needed.
@@ -336,8 +367,7 @@ function htmlTemplate(
     if(handoff()) return false;
     var hit = stored(url);
     if(!hit || !hit.y) return false;
-    lastSet = hit.y;
-    window.scrollTo(0, hit.y);
+    go(hit.y);
     return true;
   }
   window.mdrfcScroll = { save: save, restore: restore };
@@ -349,17 +379,17 @@ function htmlTemplate(
     try{ return JSON.parse(localStorage.getItem(k)).t || 0; }catch(e){ return 0; }
   }
   function prune(){
-    var keys = [];
+    var entries = [];
     try {
       for(var i = 0; i < localStorage.length; i++){
         var k = localStorage.key(i);
-        if(k && k.indexOf(KEY) === 0) keys.push(k);
+        if(k && k.indexOf(KEY) === 0) entries.push({ k: k, t: stamp(k) });
       }
     } catch(e){ return; }
-    if(keys.length <= MAX) return;
-    keys.sort(function(a, b){ return stamp(a) - stamp(b); });
-    for(var j = 0; j < keys.length - MAX; j++){
-      try{ localStorage.removeItem(keys[j]); }catch(e){}
+    if(entries.length <= MAX) return;
+    entries.sort(function(a, b){ return a.t - b.t; });
+    for(var j = 0; j < entries.length - MAX; j++){
+      try{ localStorage.removeItem(entries[j].k); }catch(e){}
     }
   }
 
@@ -367,21 +397,26 @@ function htmlTemplate(
   // stored font size and column width were applied, landing in the wrong place.
   try { if("scrollRestoration" in history) history.scrollRestoration = "manual"; } catch(e){}
 
+  // A write per frame of a flick scroll is a hundred synchronous trips to
+  // storage for one position worth keeping; a quarter second of stillness
+  // reads the same to the reader.
   var pending = 0, touched = false;
   window.addEventListener("scroll", function(){
     if(Math.abs(window.scrollY - lastSet) > 2) touched = true;
     if(pending) return;
-    pending = requestAnimationFrame(function(){ pending = 0; save(); });
+    pending = setTimeout(function(){ pending = 0; save(); }, 250);
   }, { passive: true });
-  // The frame the throttle is waiting on never runs if the tab goes away first.
+  // The write the throttle is waiting on never happens if the tab goes first.
   window.addEventListener("pagehide", function(){ save(); });
 
   restore();
   prune();
   // Images and a webfont land after this runs and move the offset out from
-  // under it. Repeat once everything has settled — unless the reader has
-  // meanwhile scrolled somewhere of their own choosing.
-  window.addEventListener("load", function(){ if(!touched) restore(); });
+  // under it. Repeat once everything has settled, from the offset asked for
+  // rather than the clamped landing — unless the reader has meanwhile scrolled
+  // somewhere of their own choosing, or was never restored at all because a
+  // hash or a search hit had already claimed where the page opens.
+  window.addEventListener("load", function(){ if(!touched && want > 0) go(want); });
 })();
 </script>`;
 
@@ -391,14 +426,14 @@ function htmlTemplate(
 (function(){
   var root = document.documentElement;
   var SERV = ${JSON.stringify(tocMode)};
-  var MODES = /^(off|top|left|right)$/;
+  var MODES = ${TOC_MODE_RE};
   var MIN_W = 190;   // narrower than this a margin column reads as a scrap
   var MAX_W = 300;
   var GAP = 24;      // clear space between the column and the document
   var EDGE = 12;     // and between the column and the window, when pushed out
   var SPY = 84;      // a heading above this line counts as the section in view
 
-  var mode = SERV, toc = null, links = [], targets = [], current = -1;
+  var mode = SERV, toc = null, links = [], targets = [], offsets = [], current = -1;
   var lastW = -1, lastX = -1;
 
   function stored(){ try{ return localStorage.getItem("mdrfc.toc"); }catch(e){ return null; } }
@@ -454,13 +489,22 @@ function htmlTemplate(
     else if(bottom > toc.scrollTop + toc.clientHeight) toc.scrollTop = bottom - toc.clientHeight + 8;
   }
 
+  // Where each heading sits in the document. Read once per layout change
+  // rather than per scroll frame: measuring every heading on the way past
+  // forces a layout, and a long document is where the list is wanted most.
+  function measure(){
+    var y = window.scrollY;
+    offsets = targets.map(function(el){ return el.getBoundingClientRect().top + y; });
+  }
+
   // The section being read is the last heading to have passed the top of the
   // window; before any has, it is the first.
   function spy(){
     if(!links.length || root.getAttribute("data-toc") === "off") return;
+    var line = window.scrollY + SPY;
     var i = 0;
-    for(var k = 0; k < targets.length; k++){
-      if(targets[k].getBoundingClientRect().top > SPY) break;
+    for(var k = 0; k < offsets.length; k++){
+      if(offsets[k] > line) break;
       i = k;
     }
     if(i === current) return;
@@ -470,16 +514,21 @@ function htmlTemplate(
     reveal(links[i]);
   }
 
+  function relayout(){
+    place();
+    measure();
+    spy();
+  }
+
   function apply(next){
     mode = MODES.test(next) ? next : SERV;
-    place();
-    spy();
+    relayout();
   }
 
   window.mdrfcToc = {
     apply: apply,
     // A document swapped in place brings its own list with it.
-    refresh: function(){ index(); place(); spy(); }
+    refresh: function(){ index(); relayout(); }
   };
 
   index();
@@ -490,16 +539,22 @@ function htmlTemplate(
     if(pending) return;
     pending = requestAnimationFrame(function(){ pending = 0; spy(); });
   }, { passive: true });
-  window.addEventListener("resize", place);
+  window.addEventListener("resize", relayout);
+  // Images landing move every heading below them; without an observer to
+  // notice, this is the one moment worth re-measuring for.
+  window.addEventListener("load", function(){ measure(); spy(); });
   // The column also moves when the filetree opens or the reader changes the
-  // font size or content width. Width and offset are what matter; measuring
-  // again on every height change would chase the list's own placement.
+  // font size or content width. Only width and offset ask for the placement to
+  // be worked out again — measuring on every height change would chase the
+  // list's own placement — but any height change moves the headings.
   if(window.ResizeObserver){
     var ro = new ResizeObserver(function(){
       var main = document.querySelector("main");
       if(!main) return;
       var r = main.getBoundingClientRect();
       if(r.width !== lastW || r.left !== lastX) place();
+      measure();
+      spy();
     });
     ro.observe(document.body);
     var el = document.querySelector("main");
@@ -609,6 +664,9 @@ function htmlTemplate(
     var doc = new DOMParser().parseFromString(html, "text/html");
     var next = doc.querySelector("main");
     if(!next){ location.href = url; return; }
+    // Painted hits hold ranges into the markup about to be thrown away, which
+    // would keep every document ever swapped out alive behind them.
+    if(window.mdrfcHighlights) window.mdrfcHighlights.clear();
     main.innerHTML = next.innerHTML;
     if(doc.title) document.title = doc.title;
     var path = new URL(url, location.href).pathname;
@@ -682,27 +740,10 @@ function htmlTemplate(
     --hit-cur-fg: #1a1a1a;
   }
   html[data-theme="light"] { color-scheme: light; }
-  html[data-theme="dark"] {
-    color-scheme: dark;
-    --bg: #1a1a1a; --fg: #e0e0e0; --muted: #999; --border: #444;
-    --code-bg: #2a2a2a; --link: #6cb6ff;
-    --scroll-thumb: rgba(255,255,255,.20);
-    --scroll-thumb-hover: rgba(255,255,255,.34);
-    --hit-bg: #3d3200; --hit-fg: #ffe9a3;
-    --hit-line-bg: #55450a;
-    --hit-cur-bg: #b98900; --hit-cur-fg: #1a1a1a;
-  }
+  html[data-theme="dark"] { ${DARK_TOKENS} }
   /* auto: follow OS, unless user forced light */
   @media (prefers-color-scheme: dark) {
-    html:not([data-theme="light"]) {
-      color-scheme: dark;
-      --bg: #1a1a1a; --fg: #e0e0e0; --muted: #999; --border: #444;
-      --code-bg: #2a2a2a; --link: #6cb6ff;
-      --scroll-thumb: rgba(255,255,255,.20);
-      --scroll-thumb-hover: rgba(255,255,255,.34);
-      --hit-bg: #4a3d00; --hit-fg: #ffe9a3;
-      --hit-cur-bg: #b98900; --hit-cur-fg: #1a1a1a;
-    }
+    html:not([data-theme="light"]) { ${DARK_TOKENS} }
   }
 
   /* ── search hits, painted after a palette jump (Custom Highlight API) ──
@@ -1218,7 +1259,7 @@ ${reloadScript}
 
   // The placement script has already applied this; the panel only shows it.
   var tm = rd("toc", SERV_TOC);
-  tocSel.value = /^(off|top|left|right)$/.test(tm) ? tm : SERV_TOC;
+  tocSel.value = ${TOC_MODE_RE}.test(tm) ? tm : SERV_TOC;
 
   // events
   themeSel.addEventListener("change", function(){

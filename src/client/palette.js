@@ -328,5 +328,7 @@ render(html`<${Palette} />`, root);
 
 resumeHighlight();
 // Back/forward swaps <main>, which leaves the painted ranges pointing at nodes
-// no longer in the document.
+// no longer in the document. So does the filetree, which reaches this through
+// the handle rather than an event, since it swaps the markup itself.
+window.mdrfcHighlights = { clear: clearHighlights };
 window.addEventListener("popstate", clearHighlights);

@@ -26,6 +26,15 @@ function placementSource(html: string): string {
   return found[0]!;
 }
 
+/** The script that settles the placement before the document paints. */
+function bootSource(html: string): string {
+  const found = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+    .map((m) => m[1]!)
+    .filter((s) => s.includes("mdrfc.width"));
+  expect(found.length).toBe(1);
+  return found[0]!;
+}
+
 interface Box {
   left: number;
   right: number;
@@ -146,6 +155,36 @@ describe("table of contents placement", () => {
     (window as any).mdrfcToc.apply("right");
     expect(mode()).toBe("right");
     expect(placed()).toBe(true);
+  });
+});
+
+// Nothing is laid out yet here, so the window's own width stands in for the
+// measurement. It has to cover the served placement as well as a stored one:
+// a margin that only gives way after the first paint shoves the document down
+// as it lands.
+describe("placement before the first paint", () => {
+  function boot(served: TocMode, wideEnough: boolean, stored?: TocMode) {
+    const html = renderWeb(DOC, { ...OPTS, toc: served });
+    document.documentElement.setAttribute("data-toc", served);
+    if (stored) localStorage.setItem("mdrfc.toc", stored);
+    (window as any).matchMedia = () => ({ matches: wideEnough });
+    new Function(bootSource(html))();
+    return mode();
+  }
+
+  test("a served margin waits for a window wide enough to hold it", () => {
+    expect(boot("left", false)).toBe("top");
+    expect(boot("left", true)).toBe("left");
+  });
+
+  test("a stored margin is held to the same test", () => {
+    expect(boot("top", false, "right")).toBe("top");
+    expect(boot("top", true, "right")).toBe("right");
+  });
+
+  test("a placement needing no margin is left as it is", () => {
+    expect(boot("off", false)).toBe("off");
+    expect(boot("top", false)).toBe("top");
   });
 });
 
