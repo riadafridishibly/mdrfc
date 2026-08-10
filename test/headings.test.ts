@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { renderWeb } from "../src/render/web.ts";
-import { RFC_WIDTH, type RenderOpts } from "../src/util.ts";
+import { RFC_WIDTH, slugifyHeading, type RenderOpts } from "../src/util.ts";
 
 const OPTS: RenderOpts = {
   width: RFC_WIDTH,
@@ -18,6 +18,48 @@ function headings(md: string): Array<[number, string, string]> {
   }
   return out;
 }
+
+/** The id rendered for a document's single heading. */
+const idFor = (heading: string) => headings("# " + heading + "\n")[0]![1];
+
+// GitHub's slugs, so a link written against a document rendered there lands
+// on the same heading here.
+describe("heading slugs", () => {
+  test("dropped punctuation leaves the spaces around it behind", () => {
+    expect(idFor("Appendix A — go-lua gotchas")).toBe("appendix-a--go-lua-gotchas");
+    expect(idFor("Width / RFC style")).toBe("width--rfc-style");
+  });
+
+  test("punctuation with no space beside it just goes", () => {
+    expect(idFor("Hello, World!")).toBe("hello-world");
+    expect(idFor("What's a socket?")).toBe("whats-a-socket");
+  });
+
+  test("an escaped ampersand slugs as the character, not as `amp`", () => {
+    expect(idFor("Tea & crumpets")).toBe("tea--crumpets");
+  });
+
+  test("letters outside ASCII survive", () => {
+    expect(idFor("café: notes")).toBe("café-notes");
+    expect(idFor("日本語 heading")).toBe("日本語-heading");
+  });
+
+  test("hyphens and underscores are left as they were written", () => {
+    expect(idFor("snake_case & kebab-case")).toBe("snake_case--kebab-case");
+  });
+
+  test("a heading with nothing sluggable still gets an id", () => {
+    expect(idFor("!!!")).toBe("section");
+  });
+
+  test("the search index agrees with the rendered id", () => {
+    // search.ts slugs the markdown source; web.ts slugs marked's HTML. An
+    // entity or an inline tag between them would part the two.
+    for (const h of ["Appendix A — go-lua gotchas", "Tea & crumpets", "café: notes"]) {
+      expect(slugifyHeading(h)).toBe(idFor(h));
+    }
+  });
+});
 
 describe("heading permalinks", () => {
   test("every heading carries an id and a handle linking to it", () => {

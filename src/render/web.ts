@@ -1,5 +1,5 @@
 import { Marked } from "marked";
-import { slugifyHeading, type RenderOpts, type Theme } from "../util.ts";
+import { decodeEntities, slugifyHeading, type RenderOpts, type Theme } from "../util.ts";
 import {
   flattenFrontmatter,
   frontmatterTitle,
@@ -115,13 +115,7 @@ function documentTitle(
 function firstHeadingText(html: string): string | undefined {
   const m = html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/);
   if (!m) return undefined;
-  const text = m[1]
-    .replace(/<[^>]+>/g, "")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#(?:39|x27);/g, "'")
-    .replace(/&amp;/g, "&") // last: an escaped ampersand must not re-decode
+  const text = decodeEntities(m[1].replace(/<[^>]+>/g, ""))
     .replace(/\s+/g, " ")
     .trim();
   return text || undefined;

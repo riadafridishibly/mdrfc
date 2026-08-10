@@ -135,6 +135,12 @@ The handle draws its `#` from CSS rather than holding text, so heading text
 stays exactly what the markdown said — which is what the page title and the
 search highlighter read.
 
+Slugs are GitHub's, so a link written against the same document rendered
+there lands on the same heading here. That means punctuation leaves the
+spaces beside it behind — `## Appendix A — go-lua gotchas` is
+`#appendix-a--go-lua-gotchas`, with two hyphens — repeated hyphens are never
+collapsed, and letters outside ASCII are kept (`#café-notes`).
+
 ## Reading position
 
 The web view remembers where you were in each document, per path, for the

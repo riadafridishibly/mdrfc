@@ -23,20 +23,34 @@ export const SKIP_DIRS = new Set([
   "build",
 ]);
 
+/** Undo the escapes marked emits, so slugs and titles read as the source did. */
+export function decodeEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#(?:39|x27);/g, "'")
+    .replace(/&amp;/g, "&"); // last: an escaped ampersand must not re-decode
+}
+
 /**
  * Slug for a heading, matching the ids emitted into the rendered HTML:
- * lowercase, punctuation dropped, whitespace collapsed to hyphens.
+ * lowercase, punctuation dropped, each remaining space a hyphen.
  * Callers dedupe repeated slugs themselves (`-1`, `-2`, ...).
+ *
+ * This is GitHub's slug, deliberately — links written against a document
+ * rendered there have to land here too. Hence the two rules that look like
+ * bugs: dropped punctuation leaves the spaces that surrounded it behind, so
+ * `A — b` slugs to `a--b`, and runs of hyphens are never collapsed. Letters
+ * outside ASCII are kept for the same reason.
  */
 export function slugifyHeading(text: string): string {
   return (
-    text
-      .replace(/<[^>]+>/g, "") // strip inline tags
-      .toLowerCase()
-      .replace(/[^\w\s-]/g, "") // drop punctuation
+    decodeEntities(text.replace(/<[^>]+>/g, "")) // strip inline tags
       .trim()
-      .replace(/\s+/g, "-")
-      .replace(/-+/g, "-") || "section"
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s_-]/gu, "") // drop punctuation and symbols
+      .replace(/\s/g, "-") || "section"
   );
 }
 
