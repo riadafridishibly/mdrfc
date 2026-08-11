@@ -47,10 +47,11 @@ FLAGS
   -V, --version             show version
 
 TABLE OF CONTENTS (--web)
-  Every heading is listed above the document, under the frontmatter block.
-  --toc left or --toc right moves the list into the margin beside the text,
-  where it tracks the section being read; it returns to the top of the
-  document whenever the window is too narrow to hold a margin column.
+  Every heading is listed in the margin beside the text, where the list
+  tracks the section being read; it returns to the top of the document
+  whenever the window is too narrow to hold a margin column. --toc right
+  puts it on the other side, --toc top in the flow above the document.
+  An entry too long for the column reads in full on hover.
   The settings panel changes the placement without a restart.
 
 FRONTMATTER

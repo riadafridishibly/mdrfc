@@ -326,6 +326,11 @@ function htmlTemplate(
 (function(){
   try {
     var root = document.documentElement;
+    // First, before anything that can throw: the margin placement is only
+    // reachable with scripts running, and the stylesheet hides the column
+    // until it has been placed. Without this the list would be in the markup
+    // and nowhere on the page.
+    root.classList.add("mdrfc-js");
     var cw = parseInt(localStorage.getItem("mdrfc.width"), 10);
     if(cw) root.style.setProperty("--content-w", cw+"ch");
     var stored = localStorage.getItem("mdrfc.toc");
@@ -442,16 +447,31 @@ function htmlTemplate(
   var root = document.documentElement;
   var SERV = ${JSON.stringify(tocMode)};
   var MODES = ${TOC_MODE_RE};
-  var MIN_W = 190;   // narrower than this a margin column reads as a scrap
-  var MAX_W = 300;
-  var GAP = 24;      // clear space between the column and the document
-  var EDGE = 12;     // and between the column and the window, when pushed out
+  // The column is measured in the reader's own text, not in fixed pixels: a
+  // list set in 24px type needs a box to match, or every entry in it loses
+  // characters to the ellipsis as the type grows. Ratios against the 14px
+  // default, so a page nobody has resized is laid out exactly as before.
+  var MIN_EM = 190 / 14;   // narrower than this a margin column reads as a scrap
+  var MAX_EM = 300 / 14;
+  var GAP_EM = 24 / 14;    // clear space between the column and the document
+  var EDGE_EM = 12 / 14;   // and between the column and the window, when pushed out
   var SPY = 84;      // a heading above this line counts as the section in view
 
   var mode = SERV, toc = null, links = [], targets = [], offsets = [], current = -1;
   var lastW = -1, lastX = -1;
+  // Right edge of the filetree, measured with the column. Nothing the script
+  // places — column or layer — may be pulled back over it.
+  var blocked = 0;
 
   function stored(){ try{ return localStorage.getItem("mdrfc.toc"); }catch(e){ return null; } }
+
+  // The text size in force: set on the root by the settings panel when the
+  // reader has picked one, left to the stylesheet's default when they have not.
+  function size(){
+    var v = parseFloat(root.style.getPropertyValue("--font-size"));
+    if(!(v > 0)) v = parseFloat(getComputedStyle(root).getPropertyValue("--font-size"));
+    return v > 0 ? v : 14;
+  }
 
   /**
    * Put the list where the setting asks for, if it fits. A margin column is
@@ -459,21 +479,112 @@ function htmlTemplate(
    * window size, the content width, the font size and the filetree all move —
    * and gives way to the top of the document when that space runs out.
    */
+  // The whole text of an entry too long for the column, laid over the document
+  // at the entry's own coordinates. One element, reused: there is only ever one
+  // entry under the pointer.
+  var peek = document.createElement("div");
+  peek.id = "mdrfc-toc-peek";
+  peek.setAttribute("aria-hidden", "true");   // the entry itself is the one read out
+  document.body.appendChild(peek);
+
+  // The entry the layer is currently finishing, so a column that scrolls can
+  // tell the entry moving out from under the pointer from the browser bringing
+  // a tabbed one into view.
+  var peekFor = null;
+
+  function hidePeek(){
+    peekFor = null;
+    if(peek.style.display !== "none") peek.style.display = "none";
+  }
+
+  function showPeek(a){
+    if(a.scrollWidth <= a.clientWidth + 1){ hidePeek(); return; }  // nothing was cut
+    var r = a.getBoundingClientRect();
+    var edge = EDGE_EM * size();
+    var left = blocked + edge;   // the filetree is not the document's to cover
+    peekFor = a;
+    peek.textContent = a.textContent;
+    peek.classList.toggle("active", a.classList.contains("active"));
+    // Only the pointer lights the entry underneath; an entry tabbed to keeps
+    // the document's own colours, and the layer has to arrive in the colours
+    // of whatever it is finishing.
+    peek.classList.toggle("lit", a.matches(":hover"));
+    peek.style.maxWidth = Math.round(root.clientWidth - edge - left) + "px";
+    peek.style.display = "block";
+    peek.style.top = Math.round(r.top) + "px";
+    // Sits where the entry sits, and is pulled back in when its tail would
+    // otherwise run off the window — over the document rather than past it.
+    var x = Math.min(r.left, root.clientWidth - edge - peek.offsetWidth);
+    peek.style.left = Math.round(Math.max(left, x)) + "px";
+  }
+
+  function entry(e){
+    return e.target && e.target.closest ? e.target.closest("#mdrfc-toc a") : null;
+  }
+
+  function onPoint(e){
+    var a = entry(e);
+    if(a) showPeek(a); else hidePeek();
+  }
+
+  // What the page box gives up to the column, on the side the column is on.
+  // The document is centred in what is left, which puts it and the column
+  // together in the middle of the room rather than the document alone.
+  function reserve(left, right){
+    root.style.setProperty("--toc-pad-left", Math.round(left) + "px");
+    root.style.setProperty("--toc-pad-right", Math.round(right) + "px");
+  }
+
+  // Remembered so the observer can tell a layout the placement caused from one
+  // the reader did — reserving the column moves the document by design.
+  function settled(main){
+    var r = main.getBoundingClientRect();
+    lastW = r.width;
+    lastX = r.left;
+    return r;
+  }
+
   function place(){
-    var main = document.querySelector("main");
-    if(!main) return;
-    var rect = main.getBoundingClientRect();
-    lastW = rect.width;
-    lastX = rect.left;
+    hidePeek();
     root.classList.remove("mdrfc-toc-placed");
-    if(!toc || mode === "off" || mode === "top"){ root.setAttribute("data-toc", mode); return; }
+    reserve(0, 0);
+    var main = document.querySelector("main");
+    // Mid-swap there is no document to measure against. Nothing is reserved
+    // until there is one again, and the observer is told to trust nothing it
+    // remembers from the last placement.
+    if(!main){ lastW = -1; lastX = -1; return; }
+    if(!toc || mode === "off" || mode === "top"){
+      root.setAttribute("data-toc", mode);
+      settled(main);
+      return;
+    }
+    // Measured with nothing reserved: the document at its own width, in the
+    // middle of the room, with the margins it would have if there were no
+    // list at all. Both margins pay for the column, not just the one it
+    // stands in — reserving its width moves the document half that far the
+    // other way, so the two of them end up centred together. The narrower
+    // margin is what there is: it gives up as much as the other one does.
+    var rect = main.getBoundingClientRect();
+    var em = size();
+    var MIN_W = MIN_EM * em, MAX_W = MAX_EM * em;
+    var GAP = GAP_EM * em, EDGE = EDGE_EM * em;
     var vw = root.clientWidth;
     var aside = document.getElementById("mdrfc-sidebar");
-    var blocked = aside && !root.classList.contains("mdrfc-sidebar-collapsed")
-      ? aside.getBoundingClientRect().right : 0;
-    var room = mode === "left" ? rect.left - blocked : vw - rect.right;
-    if(room < MIN_W + GAP){ root.setAttribute("data-toc", "top"); return; }
-    var w = Math.min(MAX_W, room - GAP);
+    // The width the tree is set to, not the box it currently occupies: it
+    // slides in on a transform, and this runs in the frame the slide starts.
+    // A rect read there reports the tree half absent and hands the column
+    // room that is about to be taken back.
+    blocked = aside && !root.classList.contains("mdrfc-sidebar-collapsed")
+      ? parseFloat(getComputedStyle(root).getPropertyValue("--sidebar-w")) || 0 : 0;
+    var span = 2 * (Math.min(rect.left - blocked, vw - rect.right) - EDGE);
+    if(span < MIN_W + GAP){
+      root.setAttribute("data-toc", "top");
+      settled(main);
+      return;
+    }
+    var w = Math.min(MAX_W, span - GAP);
+    reserve(mode === "left" ? GAP + w : 0, mode === "right" ? GAP + w : 0);
+    rect = settled(main);
     var x = mode === "left"
       ? Math.max(blocked + EDGE, rect.left - GAP - w)
       : Math.min(vw - EDGE - w, rect.right + GAP);
@@ -487,6 +598,16 @@ function htmlTemplate(
     toc = document.getElementById("mdrfc-toc");
     links = []; targets = []; current = -1;
     if(!toc) return;
+    // A document swapped in brings a new list element, so this is attached
+    // here rather than once. Scrolling the column moves the entry out from
+    // under whatever is laid over it — unless the keyboard put it there, in
+    // which case the scroll is the browser bringing the entry into view and
+    // the layer goes with it. Tabbing to an entry below the fold scrolls the
+    // column as part of focusing it, so this fires on every one of them.
+    toc.addEventListener("scroll", function(){
+      if(peekFor && peekFor === document.activeElement) showPeek(peekFor);
+      else hidePeek();
+    }, { passive: true });
     Array.prototype.forEach.call(toc.querySelectorAll("a"), function(a){
       a.classList.remove("active");   // nothing is lit until the spy says so
       var href = a.getAttribute("href") || "";
@@ -540,8 +661,20 @@ function htmlTemplate(
     relayout();
   }
 
+  // Dragging the font size sends an event per pixel, and each placement forces
+  // two synchronous layouts before measuring every heading. One a frame is as
+  // often as any of it can be seen.
+  var frame = 0;
+  function relayoutSoon(){
+    if(frame) return;
+    frame = requestAnimationFrame(function(){ frame = 0; relayout(); });
+  }
+
   window.mdrfcToc = {
     apply: apply,
+    // The text size moves the column without always moving the document —
+    // a page whose width the window is already holding down doesn't reflow.
+    relayout: relayoutSoon,
     // A document swapped in place brings its own list with it.
     refresh: function(){ index(); relayout(); }
   };
@@ -555,6 +688,10 @@ function htmlTemplate(
     pending = requestAnimationFrame(function(){ pending = 0; spy(); });
   }, { passive: true });
   window.addEventListener("resize", relayout);
+  // Delegated, so it survives a document swapping the list out under it, and
+  // covers the keyboard as well: an entry tabbed to reads in full too.
+  document.addEventListener("mouseover", onPoint);
+  document.addEventListener("focusin", onPoint);
   // Images landing move every heading below them; without an observer to
   // notice, this is the one moment worth re-measuring for.
   window.addEventListener("load", function(){ measure(); spy(); });
@@ -779,7 +916,13 @@ function htmlTemplate(
     font-size: var(--font-size);
     line-height: 1.6;
     margin: 0;
-    padding: 2rem 1rem;
+    /* The margin contents column is reserved out of the page box rather than
+       drawn over the space beside the text. The document's own auto margins
+       then centre the pair — text and column together — instead of centring
+       the text and leaving the column to fend for itself in one half of the
+       room. Set by the placement script; nothing is reserved without it. */
+    padding: 2rem calc(1rem + var(--toc-pad-right, 0px))
+             2rem calc(1rem + var(--toc-pad-left, 0px));
     -webkit-font-smoothing: antialiased;
   }
   main {
@@ -884,8 +1027,10 @@ function htmlTemplate(
   /* ── table of contents ──────────────────────────────────────── */
   .mdrfc-toc { font-size: 0.92em; }
   html[data-toc="off"] .mdrfc-toc { display: none; }
+  /* .85em of the list's own .92em: 11px at the 14px default, and it grows with
+     the entries below it rather than sitting under them at a fixed size */
   .mdrfc-toc-head {
-    color: var(--muted); font-size: 11px; text-transform: uppercase;
+    color: var(--muted); font-size: .85em; text-transform: uppercase;
     letter-spacing: .06em; margin-bottom: .5em;
   }
   .mdrfc-toc-list { list-style: none; margin: 0; padding: 0; }
@@ -900,8 +1045,12 @@ function htmlTemplate(
   .mdrfc-toc a:hover { background: var(--code-bg); color: var(--link); }
   .mdrfc-toc a.active { color: var(--link); font-weight: 600; }
 
-  /* top: a block of its own, between the metadata and the document */
-  html[data-toc="top"] .mdrfc-toc {
+  /* top: a block of its own, between the metadata and the document. Also what
+     a page with no scripts running gets, whatever placement was served: the
+     margin is measured and revealed by a script, so without one the list has
+     to stay where the document can carry it. */
+  html[data-toc="top"] .mdrfc-toc,
+  html:not(.mdrfc-js) .mdrfc-toc {
     margin: 0 0 1.6em; padding: 0 0 1em;
     border-bottom: 1px solid var(--border);
   }
@@ -909,8 +1058,8 @@ function htmlTemplate(
   /* margin: out of the flow, beside the column, at coordinates the placement
      script measures. Held invisible until it has, so it is never painted at
      the fallback position first. */
-  html[data-toc="left"] .mdrfc-toc,
-  html[data-toc="right"] .mdrfc-toc {
+  html.mdrfc-js[data-toc="left"] .mdrfc-toc,
+  html.mdrfc-js[data-toc="right"] .mdrfc-toc {
     position: fixed; top: 56px; left: var(--toc-x, 12px);
     width: var(--toc-w, 240px);
     max-height: calc(100vh - 76px);
@@ -920,10 +1069,32 @@ function htmlTemplate(
   html.mdrfc-toc-placed[data-toc="left"] .mdrfc-toc,
   html.mdrfc-toc-placed[data-toc="right"] .mdrfc-toc { visibility: visible; }
   /* one line per entry out there — the width is the document's to spend */
-  html[data-toc="left"] .mdrfc-toc a,
-  html[data-toc="right"] .mdrfc-toc a {
+  html.mdrfc-js[data-toc="left"] .mdrfc-toc a,
+  html.mdrfc-js[data-toc="right"] .mdrfc-toc a {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+
+  /* A clipped entry, read whole on hover or on tabbing to it. The column
+     scrolls, so it clips anything reaching past its own edge; the tail is
+     shown on a layer over the document instead. Set to match the entry
+     underneath it — same size, same padding, same corner, and that entry's
+     own colours, which is why the hover colours are a class the script sets
+     rather than the default — so the text stays put and only the part that
+     was missing arrives. A long entry and a short one look the same under the
+     pointer; the layer is not a tooltip about the entry, it is the entry,
+     finished. Its width is the script's: the room it has is measured from the
+     same edges the column is, in the reader's text rather than in pixels. */
+  #mdrfc-toc-peek {
+    position: fixed; z-index: 60; display: none;
+    padding: 1px 4px; border-radius: 3px;
+    font-size: 0.92em; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+    color: var(--fg); background: var(--bg);
+    box-shadow: 0 0 0 1px var(--border), 0 6px 18px rgba(0,0,0,.18);
+    pointer-events: none;   /* the entry underneath keeps the hover and click */
+  }
+  #mdrfc-toc-peek.lit { color: var(--link); background: var(--code-bg); }
+  #mdrfc-toc-peek.active { color: var(--link); font-weight: 600; }
 
   /* ── filetree sidebar (directory mode) ──────────────────────── */
   .mdrfc-sidebar {
@@ -966,9 +1137,13 @@ function htmlTemplate(
   .mdrfc-scroll::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-thumb-hover); }
   html::-webkit-scrollbar-corner,
   .mdrfc-scroll::-webkit-scrollbar-corner { background: transparent; }
-  body.mdrfc-has-sidebar { padding-left: var(--sidebar-w); }
+  body.mdrfc-has-sidebar {
+    padding-left: calc(var(--sidebar-w) + var(--toc-pad-left, 0px));
+  }
   html.mdrfc-sidebar-collapsed .mdrfc-sidebar { transform: translateX(-100%); }
-  html.mdrfc-sidebar-collapsed body.mdrfc-has-sidebar { padding-left: 1rem; }
+  html.mdrfc-sidebar-collapsed body.mdrfc-has-sidebar {
+    padding-left: calc(1rem + var(--toc-pad-left, 0px));
+  }
 
   /* drag handle: sits on the sidebar's right edge, hidden when collapsed */
   .mdrfc-resizer {
@@ -1003,7 +1178,7 @@ function htmlTemplate(
   /* narrow screens: sidebar overlays the content instead of reserving space */
   @media (max-width: 720px) {
     .mdrfc-sidebar { width: min(280px, 85vw); box-shadow: 2px 0 14px rgba(0,0,0,.25); }
-    body.mdrfc-has-sidebar { padding-left: 1rem; }
+    body.mdrfc-has-sidebar { padding-left: calc(1rem + var(--toc-pad-left, 0px)); }
     .mdrfc-resizer { display: none; }
   }
 
@@ -1143,6 +1318,28 @@ function htmlTemplate(
     font-family: inherit; border: 1px solid var(--border); border-radius: 3px;
     padding: 0 4px; margin-right: 3px;
   }
+
+  /* ── paper ──────────────────────────────────────────────────────
+     There is no margin to put the list in: a fixed column prints on the first
+     sheet and on none of the ones after it, and the space reserved for it
+     would be blank on every one. The list prints where a document carries it,
+     at the top, and the text gets the whole page back. The reservation is an
+     inline property the placement script sets, hence the !important. */
+  @media print {
+    :root { --toc-pad-left: 0px !important; --toc-pad-right: 0px !important; }
+    html.mdrfc-js[data-toc="left"] .mdrfc-toc,
+    html.mdrfc-js[data-toc="right"] .mdrfc-toc {
+      position: static; width: auto; max-height: none; overflow: visible;
+      visibility: visible;
+      margin: 0 0 1.6em; padding: 0 0 1em;
+      border-bottom: 1px solid var(--border);
+    }
+    html.mdrfc-js[data-toc="left"] .mdrfc-toc a,
+    html.mdrfc-js[data-toc="right"] .mdrfc-toc a {
+      overflow: visible; text-overflow: clip; white-space: normal;
+    }
+    #mdrfc-toc-peek { display: none; }
+  }
 </style>
 ${bootScript}
 </head>
@@ -1242,6 +1439,7 @@ ${reloadScript}
     else { root.style.setProperty("--font-size", s+"px"); sizeVal.textContent = "("+s+"px)"; }
     sizeRange.value = s || 14;
     sizeNum.value = s || 14;
+    if(window.mdrfcToc) window.mdrfcToc.relayout();
   }
   function applyWidth(w){
     if(!w){ root.style.removeProperty("--content-w"); widthVal.textContent = ""; }

@@ -22,7 +22,7 @@ export interface RenderOpts {
 export const RFC_WIDTH = 72;
 
 export const TOC_MODES: TocMode[] = ["off", "top", "left", "right"];
-export const DEFAULT_TOC: TocMode = "top";
+export const DEFAULT_TOC: TocMode = "left";
 
 /** A table-of-contents placement, or the default when the name is not one. */
 export function parseTocMode(v: unknown): TocMode {
