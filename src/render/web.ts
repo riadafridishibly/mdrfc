@@ -442,16 +442,28 @@ function htmlTemplate(
   var root = document.documentElement;
   var SERV = ${JSON.stringify(tocMode)};
   var MODES = ${TOC_MODE_RE};
-  var MIN_W = 190;   // narrower than this a margin column reads as a scrap
-  var MAX_W = 300;
-  var GAP = 24;      // clear space between the column and the document
-  var EDGE = 12;     // and between the column and the window, when pushed out
+  // The column is measured in the reader's own text, not in fixed pixels: a
+  // list set in 24px type needs a box to match, or every entry in it loses
+  // characters to the ellipsis as the type grows. Ratios against the 14px
+  // default, so a page nobody has resized is laid out exactly as before.
+  var MIN_EM = 190 / 14;   // narrower than this a margin column reads as a scrap
+  var MAX_EM = 300 / 14;
+  var GAP_EM = 24 / 14;    // clear space between the column and the document
+  var EDGE_EM = 12 / 14;   // and between the column and the window, when pushed out
   var SPY = 84;      // a heading above this line counts as the section in view
 
   var mode = SERV, toc = null, links = [], targets = [], offsets = [], current = -1;
   var lastW = -1, lastX = -1;
 
   function stored(){ try{ return localStorage.getItem("mdrfc.toc"); }catch(e){ return null; } }
+
+  // The text size in force: set on the root by the settings panel when the
+  // reader has picked one, left to the stylesheet's default when they have not.
+  function size(){
+    var v = parseFloat(root.style.getPropertyValue("--font-size"));
+    if(!(v > 0)) v = parseFloat(getComputedStyle(root).getPropertyValue("--font-size"));
+    return v > 0 ? v : 14;
+  }
 
   /**
    * Put the list where the setting asks for, if it fits. A margin column is
@@ -467,6 +479,9 @@ function htmlTemplate(
     lastX = rect.left;
     root.classList.remove("mdrfc-toc-placed");
     if(!toc || mode === "off" || mode === "top"){ root.setAttribute("data-toc", mode); return; }
+    var em = size();
+    var MIN_W = MIN_EM * em, MAX_W = MAX_EM * em;
+    var GAP = GAP_EM * em, EDGE = EDGE_EM * em;
     var vw = root.clientWidth;
     var aside = document.getElementById("mdrfc-sidebar");
     var blocked = aside && !root.classList.contains("mdrfc-sidebar-collapsed")
@@ -542,6 +557,9 @@ function htmlTemplate(
 
   window.mdrfcToc = {
     apply: apply,
+    // The text size moves the column without always moving the document —
+    // a page whose width the window is already holding down doesn't reflow.
+    relayout: relayout,
     // A document swapped in place brings its own list with it.
     refresh: function(){ index(); relayout(); }
   };
@@ -884,8 +902,10 @@ function htmlTemplate(
   /* ── table of contents ──────────────────────────────────────── */
   .mdrfc-toc { font-size: 0.92em; }
   html[data-toc="off"] .mdrfc-toc { display: none; }
+  /* .85em of the list's own .92em: 11px at the 14px default, and it grows with
+     the entries below it rather than sitting under them at a fixed size */
   .mdrfc-toc-head {
-    color: var(--muted); font-size: 11px; text-transform: uppercase;
+    color: var(--muted); font-size: .85em; text-transform: uppercase;
     letter-spacing: .06em; margin-bottom: .5em;
   }
   .mdrfc-toc-list { list-style: none; margin: 0; padding: 0; }
@@ -1242,6 +1262,7 @@ ${reloadScript}
     else { root.style.setProperty("--font-size", s+"px"); sizeVal.textContent = "("+s+"px)"; }
     sizeRange.value = s || 14;
     sizeNum.value = s || 14;
+    if(window.mdrfcToc) window.mdrfcToc.relayout();
   }
   function applyWidth(w){
     if(!w){ root.style.removeProperty("--content-w"); widthVal.textContent = ""; }

@@ -110,6 +110,21 @@ describe("table of contents placement", () => {
     expect(cssVar("--toc-w")).toBe("226px"); // 250 of room, less the 24 gap
   });
 
+  test("widens with the text size, so an entry holds the same words", () => {
+    localStorage.setItem("mdrfc.toc", "right");
+    document.documentElement.style.setProperty("--font-size", "28px");
+    run(2500, { left: 600, right: 1800 });
+    expect(cssVar("--toc-w")).toBe("600px"); // the cap, at twice the type
+    expect(cssVar("--toc-x")).toBe("1848px"); // the gap doubles with it
+  });
+
+  test("and gives way sooner, a margin being thinner in larger type", () => {
+    localStorage.setItem("mdrfc.toc", "right");
+    document.documentElement.style.setProperty("--font-size", "28px");
+    run(1500, { left: 500, right: 1100 });
+    expect(mode()).toBe("top"); // 400px: a column at 14px, a scrap at 28px
+  });
+
   test("falls back to the top when the margin is too thin to read", () => {
     localStorage.setItem("mdrfc.toc", "right");
     run(1000, { left: 200, right: 850 });
