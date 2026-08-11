@@ -22,12 +22,6 @@ export interface RenderOpts {
 export const RFC_WIDTH = 72;
 
 export const TOC_MODES: TocMode[] = ["off", "top", "left", "right"];
-/**
- * The margin, where the list costs the document nothing: the text stops at 72
- * columns, so the space beside it was never the document's to use. Narrow
- * windows are not held to it — the placement script sends the list back to the
- * top of the document whenever the margin is too thin to read a column in.
- */
 export const DEFAULT_TOC: TocMode = "left";
 
 /** A table-of-contents placement, or the default when the name is not one. */
