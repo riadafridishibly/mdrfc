@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "./harness.ts";
 import { renderWeb } from "../src/render/web.ts";
 import { RFC_WIDTH, type RenderOpts } from "../src/util.ts";
 

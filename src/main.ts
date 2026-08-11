@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { readFileSync, statSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
@@ -103,6 +103,10 @@ async function main() {
     strict: false,
   });
 
+  // Parsing is non-strict, so an unrecognised `--flag=value` arrives as a
+  // string; only a flag actually set counts as on.
+  const flag = (name: string): boolean => values[name] === true;
+
   if (values.help) {
     printHelp();
     process.exit(0);
@@ -123,10 +127,11 @@ async function main() {
     if (st.isDirectory()) {
       // Directory mode: show a filetree of every .md under it.
       dirMode = true;
-      baseDir = pathResolve(source);
+      const dir = pathResolve(source);
+      baseDir = dir;
       const indexCandidates = ["README.md", "readme.md", "INDEX.md", "index.md"];
       const index = indexCandidates
-        .map((n) => pathResolve(baseDir, n))
+        .map((n) => pathResolve(dir, n))
         .find((p) => {
           try {
             return statSync(p).isFile();
@@ -155,15 +160,15 @@ async function main() {
 
   const renderOpts = {
     width: values.width ? parseInt(values.width as string, 10) : RFC_WIDTH,
-    color: values.color && !values["no-color"],
+    color: flag("color") && !flag("no-color"),
     theme,
-    frontmatter: values.frontmatter !== false && !values["no-frontmatter"],
+    frontmatter: flag("frontmatter") && !flag("no-frontmatter"),
     toc: parseTocMode(values.toc),
   };
 
   if (values.web) {
     const port = parseInt(values.port as string, 10) || DEFAULT_PORT;
-    const shouldOpen = values.open && !values["no-open"];
+    const shouldOpen = flag("open") && !flag("no-open");
     await startServer({
       content,
       source: sourceFile,

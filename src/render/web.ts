@@ -142,7 +142,7 @@ function renderFrontmatterHtml(data: Record<string, FmValue>): string {
  * Frontmatter is stripped from the body, shown as a metadata block (unless
  * disabled) and its `title` becomes the document title. A table of contents
  * follows it, placed at the top of the document or in either margin.
- * Injects a tiny WebSocket client for live-reload when `reloadToken` is set,
+ * Injects a tiny live-reload client (server-sent events) when `reloadToken` is set,
  * and a settings panel (theme / searchable font picker / size / content width /
  * contents placement) persisted in localStorage.
  * `tree` (directory mode) adds a fixed sidebar listing every .md file.
@@ -276,12 +276,27 @@ function htmlTemplate(
   dirMode = false,
   tocMode: TocMode = DEFAULT_TOC
 ): string {
+  // Live reload. The stream is told which document this tab is showing, so an
+  // edit somewhere else in the tree doesn't pull it out from under the reader;
+  // in-place navigation moves the subscription with it.
   const reloadScript = reloadToken
     ? `<script>
 (function(){
-  var ws = new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/_reload');
-  ws.onmessage = function(e){ if(e.data==='reload') location.reload(); };
-  ws.onclose = function(){ setTimeout(function(){ location.reload(); }, 1500); };
+  var es = null, path = "", lost = false;
+  function connect(){
+    if(es) es.close();
+    path = location.pathname;
+    es = new EventSource("/_reload?path=" + encodeURIComponent(path));
+    es.onmessage = function(e){ if(e.data === "reload") location.reload(); };
+    // A stream that comes back after the server went away is a server started
+    // again, serving a document that may have moved on while it was gone.
+    es.onopen = function(){ if(lost) location.reload(); };
+    es.onerror = function(){ lost = true; };
+  }
+  function follow(){ if(location.pathname !== path) connect(); }
+  window.addEventListener("mdrfc:navigated", follow);
+  window.addEventListener("popstate", follow);
+  connect();
 })();
 </script>`
     : "";
@@ -681,6 +696,8 @@ function htmlTemplate(
     if(target) target.scrollIntoView();
     else if(!window.mdrfcScroll.restore(url)) window.scrollTo(0, 0);
     if(window.mdrfcToc) window.mdrfcToc.refresh();
+    // The live-reload stream subscribes per document; tell it we moved.
+    window.dispatchEvent(new CustomEvent("mdrfc:navigated"));
   }
   // Exposed so the command palette can reuse in-place navigation. Resolves
   // once the new document is in the DOM, which is when the palette paints its

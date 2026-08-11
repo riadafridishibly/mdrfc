@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "./harness.ts";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -71,7 +71,7 @@ const only = (name: string) => {
  * otherwise fix that decision for both.
  */
 async function loadHighlight() {
-  const src = await Bun.file("src/client/highlight.js").text();
+  const src = readFileSync(new URL("../src/client/highlight.js", import.meta.url), "utf8");
   const file = join(mkdtempSync(join(tmpdir(), "mdrfc-highlight-")), "highlight.js");
   writeFileSync(file, src);
   return import(file);

@@ -1,3 +1,4 @@
+import { createServer, type ServerResponse } from "node:http";
 import { watch, readFileSync, readdirSync } from "node:fs";
 import {
   dirname,
@@ -13,9 +14,16 @@ import { listSystemFonts } from "./fonts.ts";
 import { isExtendedQuery, search } from "./search.ts";
 import { FAVICON_PATH, FAVICON_SVG } from "./favicon.ts";
 import type { RenderOpts } from "./util.ts";
-import preactSrc from "htm/preact/standalone.module.js" with { type: "text" };
-import paletteSrc from "./client/palette.js" with { type: "text" };
-import highlightSrc from "./client/highlight.js" with { type: "text" };
+
+// The browser-side runtime, read off disk at startup instead of imported: these
+// are modules for the page, not for us, and Node has no text-import attribute
+// that would hand them over as strings.
+const preactSrc = readFileSync(
+  new URL(import.meta.resolve("htm/preact/standalone")),
+  "utf8"
+);
+const paletteSrc = readFileSync(new URL("./client/palette.js", import.meta.url), "utf8");
+const highlightSrc = readFileSync(new URL("./client/highlight.js", import.meta.url), "utf8");
 
 export interface ServerOpts extends RenderOpts {
   content: string;
@@ -24,6 +32,13 @@ export interface ServerOpts extends RenderOpts {
   dirMode?: boolean; // serving a directory tree of markdown files
   port: number;
   open: boolean;
+}
+
+/** A tab holding a live-reload stream open, and the document it is showing. */
+interface ReloadClient {
+  res: ServerResponse;
+  /** Path relative to baseDir, "/"-separated, as the watcher reports changes. */
+  rel: string;
 }
 
 /**
@@ -56,7 +71,7 @@ export function buildMdTree(base: string): TreeNode {
         walk(abs, child);
         if (child.children.length) node.children.push(child);
       } else if (e.name.toLowerCase().endsWith(".md")) {
-        node.children.push({ name: e.name, path: rel, dir: false });
+        node.children.push({ name: e.name, path: rel, dir: false, children: [] });
       }
     }
   };
@@ -84,56 +99,51 @@ export function listMdTreeText(base: string): string {
   return lines.join("\n");
 }
 
+/** Percent-decode a URL path, leaving a malformed escape as written. */
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
 /**
  * Start local HTTP server serving the rendered markdown.
- * Live-reload via WebSocket when a source file is provided.
+ * Live-reload over server-sent events when a filesystem path is being served.
  */
 export async function startServer(opts: ServerOpts): Promise<void> {
   const port = await findFreePort(opts.port);
   const url = `http://localhost:${port}`;
 
-  let content = opts.content;
-  const sockets = new Set<WebSocket>();
+  const clients = new Set<ReloadClient>();
 
   // Base directory used to resolve internal (relative) markdown links.
   // Explicit baseDir wins (directory mode); otherwise derive from source file.
   // null = stdin (no filesystem context).
   const baseDir = opts.baseDir ?? (opts.source ? pathResolve(dirname(opts.source)) : null);
+  const sourceFile = opts.source ? pathResolve(opts.source) : null;
 
-  // Filetree (directory mode): one scan at startup. New/deleted .md files
-  // need a restart to appear, but edited content live-reloads as usual.
-  const tree = opts.dirMode && baseDir ? buildMdTree(baseDir) : null;
+  // Rebuilt whenever a .md file appears or disappears, so the sidebar lists
+  // what is on disk now rather than what was there at startup.
+  let tree = opts.dirMode && baseDir ? buildMdTree(baseDir) : null;
 
-  // Live reload: watch source file, re-render, ping clients.
-  if (opts.source) {
-    let debounce: Timer | null = null;
-    watch(opts.source, () => {
-      if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => {
-        try {
-          content = readFileSync(opts.source!, "utf8");
-          for (const ws of sockets) {
-            if (ws.readyState === WebSocket.OPEN) ws.send("reload");
-          }
-        } catch {
-          /* file may be mid-write; skip */
-        }
-      }, 100);
-    });
-  }
+  /** Where a served file sits under baseDir, in the form the watcher reports. */
+  const relOf = (abs: string): string =>
+    baseDir ? pathRelative(baseDir, abs).split(sep).join("/") : "";
+
+  const rootRel = sourceFile ? relOf(sourceFile) : "";
 
   /**
-   * Resolve a request pathname to a markdown file under baseDir.
-   * Returns null if not allowed (stdin mode, traversal, non-md, missing).
-   * Decodes percent-encoding and treats the root path as the source file.
+   * Resolve a request path to a markdown file under baseDir.
+   * Returns null if not allowed (stdin mode, traversal, non-md).
+   * Takes an already-decoded path; the root path is the source file's.
    */
   function resolveRequestedFile(pathname: string): string | null {
     if (!baseDir) return null;
-    let rel = decodeURIComponent(pathname);
-    if (rel === "/") return null; // root served from cached `content`
+    if (pathname === "/") return null; // root serves the source file
     // strip leading slash so it resolves relative to baseDir
-    rel = rel.replace(/^\/+/, "");
-    const abs = pathResolve(baseDir, rel);
+    const abs = pathResolve(baseDir, pathname.replace(/^\/+/, ""));
     // path traversal guard: must stay inside baseDir
     const inside = pathRelative(baseDir, abs);
     if (inside.startsWith("..") || inside.includes(`..${sep}`)) return null;
@@ -141,128 +151,219 @@ export async function startServer(opts: ServerOpts): Promise<void> {
     return abs;
   }
 
-  /** Render `md`, or return a 404 page if null/empty. */
-  function htmlResponse(md: string | null, currentRel: string, status = 200): Response {
-    const body = md ?? "# Not found\n\nNo such markdown file.\n";
-    const html = renderWeb(
-      body,
-      opts,
-      opts.source ? "1" : undefined,
-      tree,
-      currentRel
-    );
-    return new Response(html, {
-      status,
-      headers: { "content-type": "text/html; charset=utf-8" },
-    });
+  /**
+   * The markdown behind `/`. Re-read per request rather than cached, so a
+   * reload shows the file as it is now even if the watcher missed the write.
+   */
+  function rootMarkdown(): string {
+    if (!sourceFile) return opts.content; // stdin: nothing to re-read
+    try {
+      return readFileSync(sourceFile, "utf8");
+    } catch {
+      return "";
+    }
   }
 
-  const server = Bun.serve({
-    port,
-    development: false,
-    fetch(req, server) {
-      const u = new URL(req.url);
+  // ── live reload ────────────────────────────────────────────────────────
+  // The directory is watched, not the file. An editor that saves by writing a
+  // temp file and renaming it over the original replaces the inode, leaving a
+  // file watch attached to something no longer on disk — dead after one save,
+  // which is why reloads stopped arriving. Directory mode watches recursively,
+  // so files added or deleted while the server runs reach the sidebar too.
+  if (baseDir) {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const touched = new Set<string>();
 
-      // WebSocket upgrade endpoint for live reload
-      if (u.pathname === "/_reload") {
-        const ok = server.upgrade(req);
-        if (ok) return undefined;
-        return new Response("Upgrade required", { status: 426 });
+    const flush = (): void => {
+      timer = null;
+      const changed = new Set(touched);
+      touched.clear();
+
+      let structural = false;
+      if (opts.dirMode && baseDir) {
+        const next = buildMdTree(baseDir);
+        structural = JSON.stringify(next) !== JSON.stringify(tree);
+        tree = next;
       }
 
-      // Site icon. The `.ico` sibling is answered empty rather than left to
-      // fall through: without it, a browser that ignores the SVG link would be
-      // handed the whole document as its icon.
-      if (u.pathname === FAVICON_PATH) {
-        return new Response(FAVICON_SVG, {
-          headers: {
-            "content-type": "image/svg+xml; charset=utf-8",
-            "cache-control": "no-store",
-          },
-        });
+      for (const client of clients) {
+        // A new or deleted file changes every page's sidebar, so every tab
+        // has to come back for it; an edit only concerns whoever is reading it.
+        if (structural || changed.has(client.rel)) client.res.write("data: reload\n\n");
       }
-      if (u.pathname === "/favicon.ico") return new Response(null, { status: 204 });
+    };
 
-      // Installed font families (monospace flagged) for the settings panel
-      if (u.pathname === "/_fonts") {
-        return new Response(JSON.stringify(listSystemFonts()), {
-          headers: { "content-type": "application/json; charset=utf-8" },
-        });
-      }
+    const onChange = (_event: string, name: string | Buffer | null): void => {
+      const file = typeof name === "string" ? name : name?.toString();
+      if (!file || !file.toLowerCase().endsWith(".md")) return;
+      touched.add(file.split(sep).join("/"));
+      // One save is several filesystem events; answer the last of them.
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(flush, 80);
+    };
 
-      // Command palette runtime. Served as separate modules rather than inlined
-      // so the ~13 KB bundle isn't re-sent with every in-place navigation —
-      // that only refetches the document, so these are not requested again.
-      // Never cached: a viewer that live-reloads must not keep serving a stale
-      // script after the binary it came from has changed underneath it.
-      const clientModule =
-        u.pathname === "/_preact.js"
-          ? preactSrc
-          : u.pathname === "/_palette.js"
-            ? paletteSrc
-            : u.pathname === "/_highlight.js"
-              ? highlightSrc
-              : null;
-      if (clientModule !== null) {
-        return new Response(clientModule, {
-          headers: {
-            "content-type": "text/javascript; charset=utf-8",
-            "cache-control": "no-store",
-          },
-        });
-      }
-
-      // Full-text search across the served directory. `extended` tells the
-      // palette the query was read as a path filter, so it can say why no
-      // content results came back.
-      if (u.pathname === "/_search") {
-        const q = u.searchParams.get("q") ?? "";
-        const body = {
-          hits: baseDir ? search(baseDir, q) : [],
-          extended: isExtendedQuery(q.trim()),
-        };
-        return new Response(JSON.stringify(body), {
-          headers: { "content-type": "application/json; charset=utf-8" },
-        });
-      }
-
-      // Internal link routing: serve a sibling/nested .md file relative
-      // to the source file's directory. Root path serves the source.
-      const requested = resolveRequestedFile(u.pathname);
-      if (requested) {
-        const currentRel = pathRelative(baseDir, requested);
+    try {
+      watch(baseDir, { recursive: opts.dirMode === true }, onChange);
+    } catch {
+      // Recursive watching is not available everywhere; the source file alone
+      // is worse but better than nothing.
+      if (sourceFile) {
         try {
-          const md = readFileSync(requested, "utf8");
-          return htmlResponse(md, currentRel);
+          watch(sourceFile, onChange);
         } catch {
-          return htmlResponse(null, currentRel, 404);
+          /* no live reload */
         }
       }
+    }
+  }
 
-      // Directory mode root: highlight the chosen index file (if any).
-      const rootRel = opts.dirMode && opts.source
-        ? pathRelative(baseDir, opts.source)
-        : "";
-      return htmlResponse(content, rootRel);
-    },
-    websocket: {
-      open(ws) {
-        sockets.add(ws as unknown as WebSocket);
-      },
-      message() {
-        /* no-op */
-      },
-      close(ws) {
-        sockets.delete(ws as unknown as WebSocket);
-      },
-    },
+  /** Open a server-sent-events stream for one tab. */
+  function openReloadStream(res: ServerResponse, want: string): void {
+    const abs = want === "/" ? sourceFile : resolveRequestedFile(want);
+    const client: ReloadClient = { res, rel: abs ? relOf(abs) : rootRel };
+    res.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-store",
+      connection: "keep-alive",
+    });
+    res.write("retry: 1000\n\n");
+    // An idle stream gets dropped by whatever sits in between; a comment line
+    // is the cheapest thing that counts as traffic.
+    const beat = setInterval(() => res.write(":\n\n"), 25_000);
+    const drop = (): void => {
+      clearInterval(beat);
+      clients.delete(client);
+    };
+    res.on("close", drop);
+    res.on("error", drop);
+    clients.add(client);
+  }
+
+  function send(
+    res: ServerResponse,
+    status: number,
+    type: string,
+    body: string,
+    extra: Record<string, string> = {}
+  ): void {
+    const buf = Buffer.from(body, "utf8");
+    res.writeHead(status, {
+      "content-type": type,
+      "content-length": buf.byteLength,
+      ...extra,
+    });
+    res.end(buf);
+  }
+
+  /** Render `md`, or a 404 page if null. Never cached: it changes underneath. */
+  function sendHtml(
+    res: ServerResponse,
+    md: string | null,
+    currentRel: string,
+    status = 200
+  ): void {
+    const body = md ?? "# Not found\n\nNo such markdown file.\n";
+    const html = renderWeb(body, opts, baseDir ? "1" : undefined, tree, currentRel);
+    send(res, status, "text/html; charset=utf-8", html, { "cache-control": "no-store" });
+  }
+
+  const server = createServer((req, res) => {
+    const u = new URL(req.url ?? "/", url);
+
+    // Live-reload stream. The tab names the document it is showing, so an edit
+    // only reloads the tabs reading that file.
+    if (u.pathname === "/_reload") {
+      if (!baseDir) {
+        send(res, 404, "text/plain; charset=utf-8", "no live reload for stdin");
+        return;
+      }
+      openReloadStream(res, u.searchParams.get("path") ?? "/");
+      return;
+    }
+
+    // Site icon. The `.ico` sibling is answered empty rather than left to
+    // fall through: without it, a browser that ignores the SVG link would be
+    // handed the whole document as its icon.
+    if (u.pathname === FAVICON_PATH) {
+      send(res, 200, "image/svg+xml; charset=utf-8", FAVICON_SVG, {
+        "cache-control": "no-store",
+      });
+      return;
+    }
+    if (u.pathname === "/favicon.ico") {
+      res.writeHead(204).end();
+      return;
+    }
+
+    // Installed font families (monospace flagged) for the settings panel
+    if (u.pathname === "/_fonts") {
+      send(res, 200, "application/json; charset=utf-8", JSON.stringify(listSystemFonts()));
+      return;
+    }
+
+    // Command palette runtime. Served as separate modules rather than inlined
+    // so the ~13 KB bundle isn't re-sent with every in-place navigation —
+    // that only refetches the document, so these are not requested again.
+    // Never cached: a viewer that live-reloads must not keep serving a stale
+    // script after the source it came from has changed underneath it.
+    const clientModule =
+      u.pathname === "/_preact.js"
+        ? preactSrc
+        : u.pathname === "/_palette.js"
+          ? paletteSrc
+          : u.pathname === "/_highlight.js"
+            ? highlightSrc
+            : null;
+    if (clientModule !== null) {
+      send(res, 200, "text/javascript; charset=utf-8", clientModule, {
+        "cache-control": "no-store",
+      });
+      return;
+    }
+
+    // Full-text search across the served directory. `extended` tells the
+    // palette the query was read as a path filter, so it can say why no
+    // content results came back.
+    if (u.pathname === "/_search") {
+      const q = u.searchParams.get("q") ?? "";
+      const body = {
+        hits: baseDir ? search(baseDir, q) : [],
+        extended: isExtendedQuery(q.trim()),
+      };
+      send(res, 200, "application/json; charset=utf-8", JSON.stringify(body));
+      return;
+    }
+
+    // Internal link routing: serve a sibling/nested .md file relative
+    // to the source file's directory. Root path serves the source.
+    const requested = resolveRequestedFile(safeDecode(u.pathname));
+    if (requested) {
+      const currentRel = relOf(requested);
+      try {
+        sendHtml(res, readFileSync(requested, "utf8"), currentRel);
+      } catch {
+        sendHtml(res, null, currentRel, 404);
+      }
+      return;
+    }
+
+    // Directory mode root: highlight the chosen index file (if any).
+    sendHtml(res, rootMarkdown(), opts.dirMode ? rootRel : "");
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, () => {
+      server.off("error", reject);
+      resolve();
+    });
   });
 
   const fileLabel = opts.source ? ` ${opts.source}` : " (stdin)";
-  const reloadLabel = opts.source ? " · live-reload on" : "";
+  const reloadLabel = baseDir ? " · live-reload on" : "";
   // The banner goes to stderr so stdout stays pipe-clean. Written directly
-  // rather than via console.error, which Bun paints red — this is status, not
-  // an error.
+  // rather than via console.error, which some runtimes paint red — this is
+  // status, not an error.
   const color = process.stderr.isTTY;
   const green = color ? "\x1b[32m" : "";
   const dim = color ? "\x1b[2m" : "";
@@ -273,12 +374,11 @@ export async function startServer(opts: ServerOpts): Promise<void> {
   if (opts.open) openBrowser(url);
 
   // keep process alive
-  process.on("SIGINT", () => {
-    server.stop(true);
+  const stop = (): void => {
+    for (const client of clients) client.res.end();
+    server.close();
     process.exit(0);
-  });
-  process.on("SIGTERM", () => {
-    server.stop(true);
-    process.exit(0);
-  });
+  };
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
 }

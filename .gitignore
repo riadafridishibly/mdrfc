@@ -1,11 +1,6 @@
 # dependencies
 node_modules/
 
-# build artifacts
-mdrfc
-mdrfc-darwin-*
-mdrfc-linux-*
-
 # os / editor
 .DS_Store
 *.log

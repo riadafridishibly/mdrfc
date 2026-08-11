@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "./harness.ts";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { renderWeb } from "../src/render/web.ts";
 import { RFC_WIDTH, type RenderOpts, type TocMode } from "../src/util.ts";

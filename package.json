@@ -6,16 +6,14 @@
   "bin": {
     "mdrfc": "src/main.ts"
   },
+  "files": [
+    "src"
+  ],
   "scripts": {
-    "dev": "bun src/main.ts",
-    "test": "bun test",
-    "start": "bun src/main.ts",
-    "build": "bun build --compile src/main.ts --outfile mdrfc && node scripts/postbuild.mjs mdrfc",
-    "build:macos-arm64": "bun build --compile --target=bun-darwin-arm64 src/main.ts --outfile mdrfc-darwin-arm64 && node scripts/postbuild.mjs mdrfc-darwin-arm64",
-    "build:macos-x64": "bun build --compile --target=bun-darwin-x64 src/main.ts --outfile mdrfc-darwin-x64 && node scripts/postbuild.mjs mdrfc-darwin-x64",
-    "build:linux-arm64": "bun build --compile --target=bun-linux-arm64 src/main.ts --outfile mdrfc-linux-arm64",
-    "build:linux-x64": "bun build --compile --target=bun-linux-x64 src/main.ts --outfile mdrfc-linux-x64",
-    "link": "bun link"
+    "dev": "node src/main.ts",
+    "start": "node src/main.ts",
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "fzf": "0.5.2",
@@ -25,10 +23,12 @@
     "preact": "^10.29.8"
   },
   "engines": {
-    "bun": ">=1.1.0"
+    "node": ">=22.18.0"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.11.1",
-    "happy-dom": "^20.11.1"
+    "@types/node": "^24.10.1",
+    "happy-dom": "^20.11.1",
+    "typescript": "^5.9.3"
   }
 }

@@ -1,8 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "./harness.ts";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const client = (name: string) =>
+  fileURLToPath(new URL(`../src/client/${name}`, import.meta.url));
 
 /**
  * The palette imports from "/_preact.js" and "/_highlight.js", the URLs the
@@ -10,11 +14,11 @@ import { join, resolve } from "node:path";
  * so the module can be imported here — everything else is loaded verbatim.
  */
 async function loadPalette() {
-  const runtime = resolve("node_modules/htm/preact/standalone.module.js");
-  const src = await Bun.file("src/client/palette.js").text();
+  const runtime = fileURLToPath(import.meta.resolve("htm/preact/standalone"));
+  const src = readFileSync(client("palette.js"), "utf8");
   const patched = src
     .replace('from "/_preact.js"', `from ${JSON.stringify(runtime)}`)
-    .replace('from "/_highlight.js"', `from ${JSON.stringify(resolve("src/client/highlight.js"))}`);
+    .replace('from "/_highlight.js"', `from ${JSON.stringify(client("highlight.js"))}`);
   const file = join(mkdtempSync(join(tmpdir(), "mdrfc-palette-")), "palette.js");
   writeFileSync(file, patched);
   await import(file);

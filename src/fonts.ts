@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { closeSync, openSync, readSync, readdirSync } from "node:fs";
+import { closeSync, openSync, readSync, readdirSync, type Dirent } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 
@@ -116,7 +116,7 @@ function fontDirs(): string[] {
 /** Recursively add every family found under `dir`. Exported for tests, which
  *  need a scan they can point at a fixture directory. */
 export function scanDir(dir: string, out: Map<string, boolean>): void {
-  let entries: ReturnType<typeof readdirSync>;
+  let entries: Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
   } catch {

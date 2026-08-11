@@ -137,7 +137,10 @@ export function stripAnsi(s: string): string {
 
 /** Read all of stdin as utf8 text. */
 export async function readStdin(): Promise<string> {
-  return await Bun.stdin.text();
+  process.stdin.setEncoding("utf8");
+  let text = "";
+  for await (const chunk of process.stdin) text += chunk;
+  return text;
 }
 
 /** Probe whether a TCP port is free. */

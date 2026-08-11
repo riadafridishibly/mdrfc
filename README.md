@@ -19,22 +19,17 @@ Markdown is for *reading*, not just rendering to HTML. mdrfc gives you two fast 
 
 ## Install
 
-Requires [Bun](https://bun.sh) ≥ 1.1.
+Requires [Node](https://nodejs.org) ≥ 22.18, which runs the TypeScript sources
+directly by stripping the types out. There is no build step.
 
 ```sh
 # run from source
-bun install
-bun src/main.ts README.md
+npm install
+node src/main.ts README.md
 
 # global link (so `mdrfc` works anywhere)
-bun link
-
-# or build a standalone binary (~60 MB, self-contained, no Bun needed)
-bun run build
-./mdrfc README.md
+npm link
 ```
-
-> On macOS the build step ad-hoc codesigns the binary so it isn't killed by Gatekeeper on first run.
 
 ## Usage
 
@@ -107,7 +102,7 @@ hex/`.inf`/`.nan` numerics (kept as strings). Nested keys are shown flattened
 (`meta.status`). Malformed frontmatter is ignored rather than fatal.
 
 ```sh
-bun test    # parser test suite
+npm test    # parser test suite
 ```
 
 ## Directory mode
@@ -238,23 +233,18 @@ direct scan of the OS font directories that reads only each font's `name` and
 
 ## Live reload
 
-With `--web` and a **file** (not stdin), mdrfc watches the file. On every save:
+## Live reload
 
-1. File is re-read.
-2. All connected browser tabs get a WebSocket `reload` ping and refresh.
+With `--web` and a filesystem path (anything but stdin), mdrfc watches the
+directory being served — not the individual file, so an editor that saves by
+renaming a temp file over the original doesn't break the watch after one save.
+Directory mode watches recursively, so files added or deleted while the server
+runs reach the sidebar without a restart.
 
-The reload client reconnects automatically if the server restarts.
-
-## Cross-platform binaries
-
-```sh
-bun run build:macos-arm64   # Apple Silicon
-bun run build:macos-x64     # Intel Mac
-bun run build:linux-arm64
-bun run build:linux-x64
-```
-
-Each produces a standalone executable named `mdrfc-<os>-<arch>`.
+Each browser tab holds a server-sent-events stream open and names the document
+it is showing. An edit reloads only the tabs reading that file; a file added or
+removed reloads every tab, since it changes every sidebar. A tab whose stream
+comes back after the server went away reloads itself.
 
 ## Layout
 
@@ -266,15 +256,16 @@ src/
   search.ts        fzf path ranking + heading/content scan, mtime-cached
   fonts.ts         installed font families via fc-list + sfnt table scan
   open.ts          cross-platform browser open
-  server.ts        Bun.serve + WebSocket live-reload + file watcher + md tree
+  server.ts        node:http server + SSE live-reload + dir watcher + md tree
+  types/           declarations for the one dependency that ships none
   client/
     palette.js     Cmd-K command palette (Preact + htm, served as a module)
     highlight.js   paints the picked line + query in the document (Highlight API)
   render/
     term.ts        marked + marked-terminal renderer; dir-mode tree
     web.ts         marked HTML + CSS template + sidebar filetree
-scripts/
-  postbuild.mjs    ad-hoc codesign on macOS
+test/
+  harness.ts       the slice of `expect` these tests use, over node:test
 ```
 
 ## Dependencies
@@ -286,9 +277,9 @@ Five runtime deps, none with transitive dependencies of their own:
 - [`fzf`](https://github.com/ajitid/fzf-for-js) — fzf's matching algorithm, for filename ranking
 - [`preact`](https://preactjs.com) + [`htm`](https://github.com/developit/htm) — the command palette
 
-Everything else (HTTP server, WebSocket, file watch, arg parsing, browser launch) uses Bun or Node built-ins.
+Everything else (HTTP server, live reload, file watch, arg parsing, browser launch) uses Node built-ins.
 
 `preact` and `htm` ship to the browser as a single 13 KB bundle, served from
 `/_preact.js` rather than inlined so it stays cached across navigation. There is
 no frontend build step — the palette is authored with htm's tagged templates and
-text-imported into the binary.
+read off disk at startup.
