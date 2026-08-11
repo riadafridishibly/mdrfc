@@ -331,4 +331,4 @@ read off disk at startup, and copied byte for byte into the published build.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/riadafridishibly/mdrfc/blob/main/LICENSE).

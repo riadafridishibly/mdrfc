@@ -13,7 +13,12 @@ import {
   type Theme,
 } from "./util.ts";
 
-const VERSION = "mdrfc 0.1.0";
+/** Read from package.json so `npm version` is the only place it is bumped. */
+const VERSION = `mdrfc ${
+  (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+    version: string;
+  }).version
+}`;
 const DEFAULT_PORT = 2119;
 
 function printHelp(): void {
