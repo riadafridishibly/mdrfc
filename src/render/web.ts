@@ -661,11 +661,20 @@ function htmlTemplate(
     relayout();
   }
 
+  // Dragging the font size sends an event per pixel, and each placement forces
+  // two synchronous layouts before measuring every heading. One a frame is as
+  // often as any of it can be seen.
+  var frame = 0;
+  function relayoutSoon(){
+    if(frame) return;
+    frame = requestAnimationFrame(function(){ frame = 0; relayout(); });
+  }
+
   window.mdrfcToc = {
     apply: apply,
     // The text size moves the column without always moving the document —
     // a page whose width the window is already holding down doesn't reflow.
-    relayout: relayout,
+    relayout: relayoutSoon,
     // A document swapped in place brings its own list with it.
     refresh: function(){ index(); relayout(); }
   };
