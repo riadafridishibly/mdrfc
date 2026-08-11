@@ -326,6 +326,11 @@ function htmlTemplate(
 (function(){
   try {
     var root = document.documentElement;
+    // First, before anything that can throw: the margin placement is only
+    // reachable with scripts running, and the stylesheet hides the column
+    // until it has been placed. Without this the list would be in the markup
+    // and nowhere on the page.
+    root.classList.add("mdrfc-js");
     var cw = parseInt(localStorage.getItem("mdrfc.width"), 10);
     if(cw) root.style.setProperty("--content-w", cw+"ch");
     var stored = localStorage.getItem("mdrfc.toc");
@@ -1005,8 +1010,12 @@ function htmlTemplate(
   .mdrfc-toc a:hover { background: var(--code-bg); color: var(--link); }
   .mdrfc-toc a.active { color: var(--link); font-weight: 600; }
 
-  /* top: a block of its own, between the metadata and the document */
-  html[data-toc="top"] .mdrfc-toc {
+  /* top: a block of its own, between the metadata and the document. Also what
+     a page with no scripts running gets, whatever placement was served: the
+     margin is measured and revealed by a script, so without one the list has
+     to stay where the document can carry it. */
+  html[data-toc="top"] .mdrfc-toc,
+  html:not(.mdrfc-js) .mdrfc-toc {
     margin: 0 0 1.6em; padding: 0 0 1em;
     border-bottom: 1px solid var(--border);
   }
@@ -1014,8 +1023,8 @@ function htmlTemplate(
   /* margin: out of the flow, beside the column, at coordinates the placement
      script measures. Held invisible until it has, so it is never painted at
      the fallback position first. */
-  html[data-toc="left"] .mdrfc-toc,
-  html[data-toc="right"] .mdrfc-toc {
+  html.mdrfc-js[data-toc="left"] .mdrfc-toc,
+  html.mdrfc-js[data-toc="right"] .mdrfc-toc {
     position: fixed; top: 56px; left: var(--toc-x, 12px);
     width: var(--toc-w, 240px);
     max-height: calc(100vh - 76px);
@@ -1025,8 +1034,8 @@ function htmlTemplate(
   html.mdrfc-toc-placed[data-toc="left"] .mdrfc-toc,
   html.mdrfc-toc-placed[data-toc="right"] .mdrfc-toc { visibility: visible; }
   /* one line per entry out there — the width is the document's to spend */
-  html[data-toc="left"] .mdrfc-toc a,
-  html[data-toc="right"] .mdrfc-toc a {
+  html.mdrfc-js[data-toc="left"] .mdrfc-toc a,
+  html.mdrfc-js[data-toc="right"] .mdrfc-toc a {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 

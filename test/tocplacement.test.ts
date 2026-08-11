@@ -263,6 +263,15 @@ describe("placement before the first paint", () => {
     expect(boot("off", false)).toBe("off");
     expect(boot("top", false)).toBe("top");
   });
+
+  // The margin is measured and revealed by script. The stylesheet keeps the
+  // list in the flow until this says there is one, so a page served `left`
+  // with scripts off reads its contents at the top rather than nowhere.
+  test("marks the page as one a script is placing", () => {
+    expect(document.documentElement.classList.contains("mdrfc-js")).toBe(false);
+    boot("left", true);
+    expect(document.documentElement.classList.contains("mdrfc-js")).toBe(true);
+  });
 });
 
 describe("reading a clipped entry", () => {
