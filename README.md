@@ -19,17 +19,64 @@ Markdown is for *reading*, not just rendering to HTML. mdrfc gives you two fast 
 
 ## Install
 
-Requires [Node](https://nodejs.org) ≥ 22.18, which runs the TypeScript sources
-directly by stripping the types out. There is no build step.
+```sh
+npx mdrfc README.md          # no install
+npm install -g mdrfc         # or keep it around
+```
+
+Needs [Node](https://nodejs.org) ≥ 20. The published package is plain
+JavaScript, so nothing is compiled on your machine at install time.
+
+From a clone the TypeScript sources run directly, with Node stripping the
+types out — that needs Node ≥ 22.18, and there is no build to run:
 
 ```sh
-# run from source
 npm install
 node src/main.ts README.md
 
 # global link (so `mdrfc` works anywhere)
 npm link
 ```
+
+`npm install` also produces `dist/`, because Node refuses to strip types from
+anything under `node_modules` and the published package therefore has to be
+JavaScript. That compile is what `npm publish` uploads; it is wired to
+`prepare`, so it is never a step you run by hand and `dist/` is never
+committed. Editing and testing stay on the TypeScript in `src/`.
+
+## Runtimes
+
+Everything outside the five dependencies is written against Node built-ins
+(`node:http`, `node:fs`, `node:util`), so all three major runtimes run it.
+Each was checked against the whole server surface — routing, the served client
+modules, search, fonts, and live reload including atomic saves and files added
+while the server runs.
+
+```sh
+node src/main.ts docs/ --web
+bun src/main.ts docs/ --web
+deno run --allow-read --allow-net --allow-env --allow-run --allow-sys src/main.ts docs/ --web
+```
+
+Deno's flags are all load-bearing: `--allow-env` because `chalk` (reached
+through `marked-terminal`) probes CI environment variables at import time,
+`--allow-run` for `less`, `fc-list` and the browser opener, `--allow-sys` for
+the home directory and platform lookups. `-A` if you would rather not list
+them.
+
+The test suite runs under all three as well — `npm test`, `bun test`, and
+`deno test -A test/`, the last one with Deno's own typechecker enabled.
+
+The Node floor of ≥ 20 is where recursive `fs.watch` starts working on Linux,
+which is what carries files added while the server runs. Everything else needs
+only Node 18.19, and the published build was checked there too — but on Linux
+below 20 the sidebar would quietly stop noticing new files, so 20 is the
+honest number.
+
+Only macOS is verified. On Linux the thing to watch is that same recursive
+`fs.watch`, which each runtime implements against the kernel differently; if
+new files stop reaching the sidebar, that is where it went. Windows is
+untested.
 
 ## Usage
 
@@ -233,8 +280,6 @@ direct scan of the OS font directories that reads only each font's `name` and
 
 ## Live reload
 
-## Live reload
-
 With `--web` and a filesystem path (anything but stdin), mdrfc watches the
 directory being served — not the individual file, so an editor that saves by
 renaming a temp file over the original doesn't break the watch after one save.
@@ -281,5 +326,9 @@ Everything else (HTTP server, live reload, file watch, arg parsing, browser laun
 
 `preact` and `htm` ship to the browser as a single 13 KB bundle, served from
 `/_preact.js` rather than inlined so it stays cached across navigation. There is
-no frontend build step — the palette is authored with htm's tagged templates and
-read off disk at startup.
+no frontend build step — the palette is authored with htm's tagged templates,
+read off disk at startup, and copied byte for byte into the published build.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
