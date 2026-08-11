@@ -247,6 +247,19 @@ describe("table of contents placement", () => {
     expect(mode()).toBe("right");
     expect(placed()).toBe(true);
   });
+
+  // Navigation swaps the document out; a placement run in the gap has nothing
+  // to measure against, and must not leave the page box paying for a column
+  // that is no longer anywhere.
+  test("gives the reserved room back when there is no document to place by", () => {
+    localStorage.setItem("mdrfc.toc", "right");
+    run(1600, { left: 500, right: 1100 });
+    expect(cssVar("--toc-pad-right")).toBe("324px");
+    document.querySelector("main")!.remove();
+    (window as any).mdrfcToc.apply("right");
+    expect(cssVar("--toc-pad-right")).toBe("0px");
+    expect(placed()).toBe(false);
+  });
 });
 
 // Nothing is laid out yet here, so the window's own width stands in for the

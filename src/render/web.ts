@@ -546,10 +546,13 @@ function htmlTemplate(
 
   function place(){
     hidePeek();
-    var main = document.querySelector("main");
-    if(!main) return;
     root.classList.remove("mdrfc-toc-placed");
     reserve(0, 0);
+    var main = document.querySelector("main");
+    // Mid-swap there is no document to measure against. Nothing is reserved
+    // until there is one again, and the observer is told to trust nothing it
+    // remembers from the last placement.
+    if(!main){ lastW = -1; lastX = -1; return; }
     if(!toc || mode === "off" || mode === "top"){
       root.setAttribute("data-toc", mode);
       settled(main);
