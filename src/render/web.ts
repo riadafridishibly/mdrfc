@@ -459,6 +459,9 @@ function htmlTemplate(
 
   var mode = SERV, toc = null, links = [], targets = [], offsets = [], current = -1;
   var lastW = -1, lastX = -1;
+  // Right edge of the filetree, measured with the column. Nothing the script
+  // places — column or layer — may be pulled back over it.
+  var blocked = 0;
 
   function stored(){ try{ return localStorage.getItem("mdrfc.toc"); }catch(e){ return null; } }
 
@@ -554,8 +557,12 @@ function htmlTemplate(
     var GAP = GAP_EM * em, EDGE = EDGE_EM * em;
     var vw = root.clientWidth;
     var aside = document.getElementById("mdrfc-sidebar");
-    var blocked = aside && !root.classList.contains("mdrfc-sidebar-collapsed")
-      ? aside.getBoundingClientRect().right : 0;
+    // The width the tree is set to, not the box it currently occupies: it
+    // slides in on a transform, and this runs in the frame the slide starts.
+    // A rect read there reports the tree half absent and hands the column
+    // room that is about to be taken back.
+    blocked = aside && !root.classList.contains("mdrfc-sidebar-collapsed")
+      ? parseFloat(getComputedStyle(root).getPropertyValue("--sidebar-w")) || 0 : 0;
     var span = 2 * (Math.min(rect.left - blocked, vw - rect.right) - EDGE);
     if(span < MIN_W + GAP){
       root.setAttribute("data-toc", "top");

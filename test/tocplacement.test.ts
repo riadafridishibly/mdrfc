@@ -75,9 +75,11 @@ function centred(el: Element, b: Box): void {
 
 /**
  * Lay the page out at `viewport` wide with the column at `main` — and the
- * filetree at `aside`, when there is one — then run the script over it.
+ * filetree `sidebar` px across, when there is one — then run the script over
+ * it. The tree is measured from the width it is set to rather than from its
+ * box, which is what it is mid-slide, so that is what is given here.
  */
-function run(viewport: number, main: Box, served: TocMode = "top", aside?: Box) {
+function run(viewport: number, main: Box, served: TocMode = "top", sidebar?: number) {
   const html = renderWeb(DOC, { ...OPTS, toc: served });
   document.documentElement.setAttribute("data-toc", served);
   document.body.innerHTML = html.match(/<main>[\s\S]*?<\/main>/)![0]!;
@@ -86,11 +88,11 @@ function run(viewport: number, main: Box, served: TocMode = "top", aside?: Box) 
     configurable: true,
   });
   centred(document.querySelector("main")!, main);
-  if (aside) {
+  if (sidebar !== undefined) {
     const el = document.createElement("aside");
     el.id = "mdrfc-sidebar";
     document.body.appendChild(el);
-    box(el, aside);
+    document.documentElement.style.setProperty("--sidebar-w", sidebar + "px");
   }
   new Function(placementSource(html))();
 }
@@ -210,7 +212,7 @@ describe("table of contents placement", () => {
 
   test("the filetree's own column is not margin to spend", () => {
     localStorage.setItem("mdrfc.toc", "left");
-    run(1400, { left: 460, right: 1060 }, "top", { left: 0, right: 400 });
+    run(1400, { left: 460, right: 1060 }, "top", 400);
     expect(mode()).toBe("top"); // only 60px between the tree and the text
   });
 
