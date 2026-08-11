@@ -74,6 +74,21 @@ function run(viewport: number, main: Box, served: TocMode = "top", aside?: Box) 
   new Function(placementSource(html))();
 }
 
+/**
+ * Hover `text`'s entry, having given it a box `wide` px across holding `full`
+ * px of text — clipped when the text is the wider of the two.
+ */
+function hover(text: string, wide: number, full: number) {
+  const a = [...document.querySelectorAll("#mdrfc-toc a")].find(
+    (el) => el.textContent === text
+  )!;
+  Object.defineProperty(a, "clientWidth", { value: wide, configurable: true });
+  Object.defineProperty(a, "scrollWidth", { value: full, configurable: true });
+  box(a, { left: 1124, right: 1124 + wide });
+  a.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+}
+
+const peek = () => document.getElementById("mdrfc-toc-peek")!;
 const mode = () => document.documentElement.getAttribute("data-toc");
 const placed = () => document.documentElement.classList.contains("mdrfc-toc-placed");
 const cssVar = (name: string) => document.documentElement.style.getPropertyValue(name);
@@ -200,6 +215,44 @@ describe("placement before the first paint", () => {
   test("a placement needing no margin is left as it is", () => {
     expect(boot("off", false)).toBe("off");
     expect(boot("top", false)).toBe("top");
+  });
+});
+
+describe("reading a clipped entry", () => {
+  beforeEach(() => {
+    localStorage.setItem("mdrfc.toc", "right");
+    run(1600, { left: 500, right: 1100 });
+  });
+
+  test("hovering one whose text was cut lays the whole of it over the page", () => {
+    hover("First", 200, 420);
+    expect(peek().style.display).toBe("block");
+    expect(peek().textContent).toBe("First");
+    expect(peek().style.left).toBe("1124px"); // where the entry itself starts
+    expect(peek().style.top).toBe("0px");
+  });
+
+  test("hovering one that already fits shows nothing", () => {
+    hover("First", 200, 200);
+    expect(peek().style.display).toBe("none");
+  });
+
+  test("leaving the list takes it away again", () => {
+    hover("First", 200, 420);
+    document.querySelector("main")!.dispatchEvent(
+      new MouseEvent("mouseover", { bubbles: true })
+    );
+    expect(peek().style.display).toBe("none");
+  });
+
+  test("scrolling the column takes it away, the entry having moved", () => {
+    hover("First", 200, 420);
+    document.getElementById("mdrfc-toc")!.dispatchEvent(new Event("scroll"));
+    expect(peek().style.display).toBe("none");
+  });
+
+  test("it is not read out twice: the entry itself is the one announced", () => {
+    expect(peek().getAttribute("aria-hidden")).toBe("true");
   });
 });
 

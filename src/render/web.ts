@@ -471,7 +471,46 @@ function htmlTemplate(
    * window size, the content width, the font size and the filetree all move —
    * and gives way to the top of the document when that space runs out.
    */
+  // The whole text of an entry too long for the column, laid over the document
+  // at the entry's own coordinates. One element, reused: there is only ever one
+  // entry under the pointer.
+  var peek = document.createElement("div");
+  peek.id = "mdrfc-toc-peek";
+  peek.setAttribute("aria-hidden", "true");   // the entry itself is the one read out
+  document.body.appendChild(peek);
+
+  function hidePeek(){ if(peek.style.display !== "none") peek.style.display = "none"; }
+
+  function showPeek(a){
+    if(a.scrollWidth <= a.clientWidth + 1){ hidePeek(); return; }  // nothing was cut
+    var r = a.getBoundingClientRect();
+    peek.textContent = a.textContent;
+    peek.classList.toggle("active", a.classList.contains("active"));
+    // Measured off-screen-ish before it is shown, so it never paints at the
+    // left edge on its way to the right one.
+    peek.style.visibility = "hidden";
+    peek.style.display = "block";
+    peek.style.left = "0px";
+    peek.style.top = Math.round(r.top) + "px";
+    // Sits where the entry sits, and is pulled back in when its tail would
+    // otherwise run off the window — over the document rather than past it.
+    var edge = EDGE_EM * size();
+    var x = Math.min(r.left, root.clientWidth - edge - peek.offsetWidth);
+    peek.style.left = Math.round(Math.max(edge, x)) + "px";
+    peek.style.visibility = "visible";
+  }
+
+  function entry(e){
+    return e.target && e.target.closest ? e.target.closest("#mdrfc-toc a") : null;
+  }
+
+  function onPoint(e){
+    var a = entry(e);
+    if(a) showPeek(a); else hidePeek();
+  }
+
   function place(){
+    hidePeek();
     var main = document.querySelector("main");
     if(!main) return;
     var rect = main.getBoundingClientRect();
@@ -502,6 +541,10 @@ function htmlTemplate(
     toc = document.getElementById("mdrfc-toc");
     links = []; targets = []; current = -1;
     if(!toc) return;
+    // A document swapped in brings a new list element, so this is attached
+    // here rather than once. Scrolling the column moves the entry out from
+    // under whatever is laid over it.
+    toc.addEventListener("scroll", hidePeek, { passive: true });
     Array.prototype.forEach.call(toc.querySelectorAll("a"), function(a){
       a.classList.remove("active");   // nothing is lit until the spy says so
       var href = a.getAttribute("href") || "";
@@ -573,6 +616,10 @@ function htmlTemplate(
     pending = requestAnimationFrame(function(){ pending = 0; spy(); });
   }, { passive: true });
   window.addEventListener("resize", relayout);
+  // Delegated, so it survives a document swapping the list out under it, and
+  // covers the keyboard as well: an entry tabbed to reads in full too.
+  document.addEventListener("mouseover", onPoint);
+  document.addEventListener("focusin", onPoint);
   // Images landing move every heading below them; without an observer to
   // notice, this is the one moment worth re-measuring for.
   window.addEventListener("load", function(){ measure(); spy(); });
@@ -944,6 +991,24 @@ function htmlTemplate(
   html[data-toc="right"] .mdrfc-toc a {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+
+  /* A clipped entry, read whole on hover. The column scrolls, so it clips
+     anything reaching past its own edge; the tail is shown on a layer over
+     the document instead. Set to match the entry underneath it — same size,
+     same padding, same corner, and the hovered entry's own colours — so the
+     text stays put and only the part that was missing arrives. A long entry
+     and a short one look the same under the pointer; the layer is not a
+     tooltip about the entry, it is the entry, finished. */
+  #mdrfc-toc-peek {
+    position: fixed; z-index: 60; display: none;
+    padding: 1px 4px; border-radius: 3px;
+    font-size: 0.92em; white-space: nowrap;
+    max-width: calc(100vw - 24px); overflow: hidden; text-overflow: ellipsis;
+    color: var(--link); background: var(--code-bg);
+    box-shadow: 0 0 0 1px var(--border), 0 6px 18px rgba(0,0,0,.18);
+    pointer-events: none;   /* the entry underneath keeps the hover and click */
+  }
+  #mdrfc-toc-peek.active { font-weight: 600; }
 
   /* ── filetree sidebar (directory mode) ──────────────────────── */
   .mdrfc-sidebar {
