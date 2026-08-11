@@ -101,14 +101,26 @@ function run(viewport: number, main: Box, served: TocMode = "top", sidebar?: num
  * Hover `text`'s entry, having given it a box `wide` px across holding `full`
  * px of text — clipped when the text is the wider of the two.
  */
-function hover(text: string, wide: number, full: number) {
+function clipped(text: string, wide: number, full: number) {
   const a = [...document.querySelectorAll("#mdrfc-toc a")].find(
     (el) => el.textContent === text
   )!;
   Object.defineProperty(a, "clientWidth", { value: wide, configurable: true });
   Object.defineProperty(a, "scrollWidth", { value: full, configurable: true });
   box(a, { left: 1124, right: 1124 + wide });
-  a.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  return a as HTMLElement;
+}
+
+function hover(text: string, wide: number, full: number) {
+  clipped(text, wide, full).dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+}
+
+/** The keyboard's way in: the entry takes focus, as tabbing to it would. */
+function tab(text: string, wide: number, full: number) {
+  const a = clipped(text, wide, full);
+  a.focus();
+  a.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+  return a;
 }
 
 const peek = () => document.getElementById("mdrfc-toc-peek")!;
@@ -309,8 +321,39 @@ describe("reading a clipped entry", () => {
     expect(peek().style.display).toBe("none");
   });
 
+  // Tabbing to an entry below the fold scrolls the column as part of focusing
+  // it, so the scroll that would take the layer away is the same event that
+  // brought the entry into view.
+  test("an entry tabbed to keeps it through the scroll that revealed it", () => {
+    tab("First", 200, 420);
+    expect(peek().style.display).toBe("block");
+    document.getElementById("mdrfc-toc")!.dispatchEvent(new Event("scroll"));
+    expect(peek().style.display).toBe("block");
+    expect(peek().textContent).toBe("First");
+  });
+
+  test("and loses it once the focus moves on", () => {
+    tab("First", 200, 420);
+    (document.querySelector("main") as HTMLElement).focus();
+    document.getElementById("mdrfc-toc")!.dispatchEvent(new Event("scroll"));
+    expect(peek().style.display).toBe("none");
+  });
+
   test("it is not read out twice: the entry itself is the one announced", () => {
     expect(peek().getAttribute("aria-hidden")).toBe("true");
+  });
+});
+
+describe("a clipped entry with the filetree open", () => {
+  test("is pulled back over the document, and stops at the tree", () => {
+    localStorage.setItem("mdrfc.toc", "right");
+    run(1600, { left: 500, right: 1100 }, "top", 400);
+    // Wider than the window: pulling its tail in would put its head over the
+    // tree, which is not the document's space to lay anything over.
+    Object.defineProperty(peek(), "offsetWidth", { value: 1500, configurable: true });
+    hover("First", 200, 420);
+    expect(peek().style.left).toBe("412px"); // the tree's 400, and 12 clear of it
+    expect(peek().style.maxWidth).toBe("1176px"); // the room that leaves
   });
 });
 

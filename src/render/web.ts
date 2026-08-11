@@ -487,25 +487,35 @@ function htmlTemplate(
   peek.setAttribute("aria-hidden", "true");   // the entry itself is the one read out
   document.body.appendChild(peek);
 
-  function hidePeek(){ if(peek.style.display !== "none") peek.style.display = "none"; }
+  // The entry the layer is currently finishing, so a column that scrolls can
+  // tell the entry moving out from under the pointer from the browser bringing
+  // a tabbed one into view.
+  var peekFor = null;
+
+  function hidePeek(){
+    peekFor = null;
+    if(peek.style.display !== "none") peek.style.display = "none";
+  }
 
   function showPeek(a){
     if(a.scrollWidth <= a.clientWidth + 1){ hidePeek(); return; }  // nothing was cut
     var r = a.getBoundingClientRect();
+    var edge = EDGE_EM * size();
+    var left = blocked + edge;   // the filetree is not the document's to cover
+    peekFor = a;
     peek.textContent = a.textContent;
     peek.classList.toggle("active", a.classList.contains("active"));
-    // Measured off-screen-ish before it is shown, so it never paints at the
-    // left edge on its way to the right one.
-    peek.style.visibility = "hidden";
+    // Only the pointer lights the entry underneath; an entry tabbed to keeps
+    // the document's own colours, and the layer has to arrive in the colours
+    // of whatever it is finishing.
+    peek.classList.toggle("lit", a.matches(":hover"));
+    peek.style.maxWidth = Math.round(root.clientWidth - edge - left) + "px";
     peek.style.display = "block";
-    peek.style.left = "0px";
     peek.style.top = Math.round(r.top) + "px";
     // Sits where the entry sits, and is pulled back in when its tail would
     // otherwise run off the window — over the document rather than past it.
-    var edge = EDGE_EM * size();
     var x = Math.min(r.left, root.clientWidth - edge - peek.offsetWidth);
-    peek.style.left = Math.round(Math.max(edge, x)) + "px";
-    peek.style.visibility = "visible";
+    peek.style.left = Math.round(Math.max(left, x)) + "px";
   }
 
   function entry(e){
@@ -587,8 +597,14 @@ function htmlTemplate(
     if(!toc) return;
     // A document swapped in brings a new list element, so this is attached
     // here rather than once. Scrolling the column moves the entry out from
-    // under whatever is laid over it.
-    toc.addEventListener("scroll", hidePeek, { passive: true });
+    // under whatever is laid over it — unless the keyboard put it there, in
+    // which case the scroll is the browser bringing the entry into view and
+    // the layer goes with it. Tabbing to an entry below the fold scrolls the
+    // column as part of focusing it, so this fires on every one of them.
+    toc.addEventListener("scroll", function(){
+      if(peekFor && peekFor === document.activeElement) showPeek(peekFor);
+      else hidePeek();
+    }, { passive: true });
     Array.prototype.forEach.call(toc.querySelectorAll("a"), function(a){
       a.classList.remove("active");   // nothing is lit until the spy says so
       var href = a.getAttribute("href") || "";
@@ -1046,23 +1062,27 @@ function htmlTemplate(
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 
-  /* A clipped entry, read whole on hover. The column scrolls, so it clips
-     anything reaching past its own edge; the tail is shown on a layer over
-     the document instead. Set to match the entry underneath it — same size,
-     same padding, same corner, and the hovered entry's own colours — so the
-     text stays put and only the part that was missing arrives. A long entry
-     and a short one look the same under the pointer; the layer is not a
-     tooltip about the entry, it is the entry, finished. */
+  /* A clipped entry, read whole on hover or on tabbing to it. The column
+     scrolls, so it clips anything reaching past its own edge; the tail is
+     shown on a layer over the document instead. Set to match the entry
+     underneath it — same size, same padding, same corner, and that entry's
+     own colours, which is why the hover colours are a class the script sets
+     rather than the default — so the text stays put and only the part that
+     was missing arrives. A long entry and a short one look the same under the
+     pointer; the layer is not a tooltip about the entry, it is the entry,
+     finished. Its width is the script's: the room it has is measured from the
+     same edges the column is, in the reader's text rather than in pixels. */
   #mdrfc-toc-peek {
     position: fixed; z-index: 60; display: none;
     padding: 1px 4px; border-radius: 3px;
     font-size: 0.92em; white-space: nowrap;
-    max-width: calc(100vw - 24px); overflow: hidden; text-overflow: ellipsis;
-    color: var(--link); background: var(--code-bg);
+    overflow: hidden; text-overflow: ellipsis;
+    color: var(--fg); background: var(--bg);
     box-shadow: 0 0 0 1px var(--border), 0 6px 18px rgba(0,0,0,.18);
     pointer-events: none;   /* the entry underneath keeps the hover and click */
   }
-  #mdrfc-toc-peek.active { font-weight: 600; }
+  #mdrfc-toc-peek.lit { color: var(--link); background: var(--code-bg); }
+  #mdrfc-toc-peek.active { color: var(--link); font-weight: 600; }
 
   /* ── filetree sidebar (directory mode) ──────────────────────── */
   .mdrfc-sidebar {
