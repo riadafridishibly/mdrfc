@@ -1309,6 +1309,28 @@ function htmlTemplate(
     font-family: inherit; border: 1px solid var(--border); border-radius: 3px;
     padding: 0 4px; margin-right: 3px;
   }
+
+  /* ── paper ──────────────────────────────────────────────────────
+     There is no margin to put the list in: a fixed column prints on the first
+     sheet and on none of the ones after it, and the space reserved for it
+     would be blank on every one. The list prints where a document carries it,
+     at the top, and the text gets the whole page back. The reservation is an
+     inline property the placement script sets, hence the !important. */
+  @media print {
+    :root { --toc-pad-left: 0px !important; --toc-pad-right: 0px !important; }
+    html.mdrfc-js[data-toc="left"] .mdrfc-toc,
+    html.mdrfc-js[data-toc="right"] .mdrfc-toc {
+      position: static; width: auto; max-height: none; overflow: visible;
+      visibility: visible;
+      margin: 0 0 1.6em; padding: 0 0 1em;
+      border-bottom: 1px solid var(--border);
+    }
+    html.mdrfc-js[data-toc="left"] .mdrfc-toc a,
+    html.mdrfc-js[data-toc="right"] .mdrfc-toc a {
+      overflow: visible; text-overflow: clip; white-space: normal;
+    }
+    #mdrfc-toc-peek { display: none; }
+  }
 </style>
 ${bootScript}
 </head>
