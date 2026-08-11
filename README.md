@@ -94,7 +94,7 @@ FLAGS
       --no-frontmatter      hide the frontmatter block (still stripped from body)
       --width <n>           content width in columns (default 72)
       --theme <auto|light|dark>  web color scheme (default auto)
-      --toc <off|top|left|right> web table of contents (default top)
+      --toc <off|top|left|right> web table of contents (default left)
   -h, --help                show this help
   -V, --version             show version
 ```
@@ -186,15 +186,22 @@ collapsed, and letters outside ASCII are kept (`#café-notes`).
 
 ## Table of contents
 
-The web view lists every heading of the document, under the frontmatter block
-and above the text. Entries are indented relative to the shallowest heading
-present, so a document whose sections all start at `##` isn't listed one step
-in. A document with one heading or none gets no list.
+The web view lists every heading of the document. Entries are indented
+relative to the shallowest heading present, so a document whose sections all
+start at `##` isn't listed one step in. A document with one heading or none
+gets no list.
 
-`--toc left` or `--toc right` moves the list out of the flow and into the
-margin beside the column, where it stays put as you read and lights the
-section you are in. There is room for it because the text stops at 72
-columns — the margin is space the document was never going to use.
+By default the list sits in the margin to the left of the text, where it stays
+put as you read and lights the section you are in. There is room for it
+because the text stops at 72 columns — the margin is space the document was
+never going to use. `--toc right` puts it on the other side; `--toc top` puts
+it in the flow instead, under the frontmatter block and above the text.
+
+An entry too long for the column is cut short, and reads in full when you
+hover or tab to it: the whole of it is laid over the document at the entry's
+own place, so only the missing tail is new. The column is measured in the text
+size you are reading at, not in fixed pixels, so raising the font size widens
+it to match and an entry keeps the same words.
 
 The margin is measured, not assumed: the window size, the content width, the
 font size and the filetree sidebar all move it, and when what is left is too

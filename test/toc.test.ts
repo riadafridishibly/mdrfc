@@ -86,7 +86,7 @@ describe("table of contents", () => {
 
   test("carries the placement into the document element", () => {
     expect(page(DOC, "right")).toContain('data-toc="right"');
-    expect(page(DOC)).toContain('data-toc="top"');
+    expect(page(DOC)).toContain('data-toc="left"'); // the served default
   });
 
   test("ships the list even when placement is off, so settings can show it", () => {
