@@ -509,15 +509,41 @@ function htmlTemplate(
     if(a) showPeek(a); else hidePeek();
   }
 
+  // What the page box gives up to the column, on the side the column is on.
+  // The document is centred in what is left, which puts it and the column
+  // together in the middle of the room rather than the document alone.
+  function reserve(left, right){
+    root.style.setProperty("--toc-pad-left", Math.round(left) + "px");
+    root.style.setProperty("--toc-pad-right", Math.round(right) + "px");
+  }
+
+  // Remembered so the observer can tell a layout the placement caused from one
+  // the reader did — reserving the column moves the document by design.
+  function settled(main){
+    var r = main.getBoundingClientRect();
+    lastW = r.width;
+    lastX = r.left;
+    return r;
+  }
+
   function place(){
     hidePeek();
     var main = document.querySelector("main");
     if(!main) return;
-    var rect = main.getBoundingClientRect();
-    lastW = rect.width;
-    lastX = rect.left;
     root.classList.remove("mdrfc-toc-placed");
-    if(!toc || mode === "off" || mode === "top"){ root.setAttribute("data-toc", mode); return; }
+    reserve(0, 0);
+    if(!toc || mode === "off" || mode === "top"){
+      root.setAttribute("data-toc", mode);
+      settled(main);
+      return;
+    }
+    // Measured with nothing reserved: the document at its own width, in the
+    // middle of the room, with the margins it would have if there were no
+    // list at all. Both margins pay for the column, not just the one it
+    // stands in — reserving its width moves the document half that far the
+    // other way, so the two of them end up centred together. The narrower
+    // margin is what there is: it gives up as much as the other one does.
+    var rect = main.getBoundingClientRect();
     var em = size();
     var MIN_W = MIN_EM * em, MAX_W = MAX_EM * em;
     var GAP = GAP_EM * em, EDGE = EDGE_EM * em;
@@ -525,9 +551,15 @@ function htmlTemplate(
     var aside = document.getElementById("mdrfc-sidebar");
     var blocked = aside && !root.classList.contains("mdrfc-sidebar-collapsed")
       ? aside.getBoundingClientRect().right : 0;
-    var room = mode === "left" ? rect.left - blocked : vw - rect.right;
-    if(room < MIN_W + GAP){ root.setAttribute("data-toc", "top"); return; }
-    var w = Math.min(MAX_W, room - GAP);
+    var span = 2 * (Math.min(rect.left - blocked, vw - rect.right) - EDGE);
+    if(span < MIN_W + GAP){
+      root.setAttribute("data-toc", "top");
+      settled(main);
+      return;
+    }
+    var w = Math.min(MAX_W, span - GAP);
+    reserve(mode === "left" ? GAP + w : 0, mode === "right" ? GAP + w : 0);
+    rect = settled(main);
     var x = mode === "left"
       ? Math.max(blocked + EDGE, rect.left - GAP - w)
       : Math.min(vw - EDGE - w, rect.right + GAP);
@@ -844,7 +876,13 @@ function htmlTemplate(
     font-size: var(--font-size);
     line-height: 1.6;
     margin: 0;
-    padding: 2rem 1rem;
+    /* The margin contents column is reserved out of the page box rather than
+       drawn over the space beside the text. The document's own auto margins
+       then centre the pair — text and column together — instead of centring
+       the text and leaving the column to fend for itself in one half of the
+       room. Set by the placement script; nothing is reserved without it. */
+    padding: 2rem calc(1rem + var(--toc-pad-right, 0px))
+             2rem calc(1rem + var(--toc-pad-left, 0px));
     -webkit-font-smoothing: antialiased;
   }
   main {
@@ -1051,9 +1089,13 @@ function htmlTemplate(
   .mdrfc-scroll::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-thumb-hover); }
   html::-webkit-scrollbar-corner,
   .mdrfc-scroll::-webkit-scrollbar-corner { background: transparent; }
-  body.mdrfc-has-sidebar { padding-left: var(--sidebar-w); }
+  body.mdrfc-has-sidebar {
+    padding-left: calc(var(--sidebar-w) + var(--toc-pad-left, 0px));
+  }
   html.mdrfc-sidebar-collapsed .mdrfc-sidebar { transform: translateX(-100%); }
-  html.mdrfc-sidebar-collapsed body.mdrfc-has-sidebar { padding-left: 1rem; }
+  html.mdrfc-sidebar-collapsed body.mdrfc-has-sidebar {
+    padding-left: calc(1rem + var(--toc-pad-left, 0px));
+  }
 
   /* drag handle: sits on the sidebar's right edge, hidden when collapsed */
   .mdrfc-resizer {
@@ -1088,7 +1130,7 @@ function htmlTemplate(
   /* narrow screens: sidebar overlays the content instead of reserving space */
   @media (max-width: 720px) {
     .mdrfc-sidebar { width: min(280px, 85vw); box-shadow: 2px 0 14px rgba(0,0,0,.25); }
-    body.mdrfc-has-sidebar { padding-left: 1rem; }
+    body.mdrfc-has-sidebar { padding-left: calc(1rem + var(--toc-pad-left, 0px)); }
     .mdrfc-resizer { display: none; }
   }
 

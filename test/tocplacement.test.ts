@@ -53,6 +53,27 @@ function box(el: Element, b: Box): void {
 }
 
 /**
+ * The document's box: `b` is where it sits with no column reserved, and it
+ * slides half of whatever is reserved the other way, which is what `margin: 0
+ * auto` does with the space the placement takes out of the page.
+ */
+function centred(el: Element, b: Box): void {
+  const pad = (name: string) =>
+    parseFloat(document.documentElement.style.getPropertyValue(name)) || 0;
+  (el as any).getBoundingClientRect = () => {
+    const shift = (pad("--toc-pad-left") - pad("--toc-pad-right")) / 2;
+    return {
+      left: b.left + shift,
+      right: b.right + shift,
+      top: 0,
+      bottom: 0,
+      width: b.right - b.left,
+      height: 0,
+    };
+  };
+}
+
+/**
  * Lay the page out at `viewport` wide with the column at `main` — and the
  * filetree at `aside`, when there is one — then run the script over it.
  */
@@ -64,7 +85,7 @@ function run(viewport: number, main: Box, served: TocMode = "top", aside?: Box) 
     value: viewport,
     configurable: true,
   });
-  box(document.querySelector("main")!, main);
+  centred(document.querySelector("main")!, main);
   if (aside) {
     const el = document.createElement("aside");
     el.id = "mdrfc-sidebar";
@@ -109,20 +130,45 @@ describe("table of contents placement", () => {
     expect(mode()).toBe("right");
     expect(placed()).toBe(true);
     expect(cssVar("--toc-w")).toBe("300px"); // 500px of room, capped
-    expect(cssVar("--toc-x")).toBe("1124px"); // 24px clear of the column
+    expect(cssVar("--toc-x")).toBe("962px"); // 24px clear of the column
+  });
+
+  test("centres the two of them together, not the text on its own", () => {
+    localStorage.setItem("mdrfc.toc", "right");
+    run(1600, { left: 500, right: 1100 });
+    // 324px out of the page box: the 300px column and the 24px gap. The text
+    // gives up half of it and keeps the other half of its old margin, so the
+    // pair sits between margins of 338px — 500 less the 162 it moved.
+    expect(cssVar("--toc-pad-right")).toBe("324px");
+    const main = document.querySelector("main")!.getBoundingClientRect();
+    expect(main.left).toBe(338);
+    expect(1600 - (Number(cssVar("--toc-x").slice(0, -2)) + 300)).toBe(338);
+  });
+
+  test("a margin too thin on its own holds the column once both pay", () => {
+    localStorage.setItem("mdrfc.toc", "right");
+    run(1300, { left: 190, right: 1110 });
+    // 190px to the right of the text would not have held a 190px column and
+    // its gap; the 190 sitting idle on the other side makes up the difference.
+    expect(mode()).toBe("right");
+    expect(cssVar("--toc-w")).toBe("300px");
+    expect(document.querySelector("main")!.getBoundingClientRect().left).toBe(28);
   });
 
   test("mirrors that on the other side", () => {
     localStorage.setItem("mdrfc.toc", "left");
     run(1600, { left: 500, right: 1100 });
-    expect(cssVar("--toc-x")).toBe("176px"); // 500 - 24 - 300
+    expect(cssVar("--toc-pad-left")).toBe("324px");
+    expect(cssVar("--toc-x")).toBe("338px"); // 662 - 24 - 300
   });
 
   test("narrows the column to the room actually left", () => {
     localStorage.setItem("mdrfc.toc", "right");
-    run(1000, { left: 200, right: 750 });
+    run(1000, { left: 160, right: 840 });
     expect(mode()).toBe("right");
-    expect(cssVar("--toc-w")).toBe("226px"); // 250 of room, less the 24 gap
+    // 160 a side, less 12 to keep clear of the window, doubled: 296 for the
+    // pair to share, and the gap comes out of that.
+    expect(cssVar("--toc-w")).toBe("272px");
   });
 
   test("widens with the text size, so an entry holds the same words", () => {
@@ -130,33 +176,34 @@ describe("table of contents placement", () => {
     document.documentElement.style.setProperty("--font-size", "28px");
     run(2500, { left: 600, right: 1800 });
     expect(cssVar("--toc-w")).toBe("600px"); // the cap, at twice the type
-    expect(cssVar("--toc-x")).toBe("1848px"); // the gap doubles with it
+    expect(cssVar("--toc-x")).toBe("1524px"); // the gap doubles with it
   });
 
   test("and gives way sooner, a margin being thinner in larger type", () => {
     localStorage.setItem("mdrfc.toc", "right");
     document.documentElement.style.setProperty("--font-size", "28px");
-    run(1500, { left: 500, right: 1100 });
-    expect(mode()).toBe("top"); // 400px: a column at 14px, a scrap at 28px
+    run(1500, { left: 200, right: 1300 });
+    expect(mode()).toBe("top"); // 400px between them: fine at 14px, not at 28
   });
 
   test("falls back to the top when the margin is too thin to read", () => {
     localStorage.setItem("mdrfc.toc", "right");
-    run(1000, { left: 200, right: 850 });
+    run(1000, { left: 100, right: 880 });
     expect(mode()).toBe("top");
     expect(placed()).toBe(false);
+    expect(cssVar("--toc-pad-right")).toBe("0px"); // and gives the room back
   });
 
   test("keeps the preference through a fallback, and comes back to it", () => {
     localStorage.setItem("mdrfc.toc", "right");
-    run(1000, { left: 200, right: 850 });
+    run(1000, { left: 100, right: 880 });
     expect(mode()).toBe("top");
     // the window widens: the same preference now fits
     Object.defineProperty(document.documentElement, "clientWidth", {
       value: 1600,
       configurable: true,
     });
-    box(document.querySelector("main")!, { left: 500, right: 1100 });
+    centred(document.querySelector("main")!, { left: 500, right: 1100 });
     window.dispatchEvent(new Event("resize"));
     expect(mode()).toBe("right");
   });
