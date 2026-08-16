@@ -10,6 +10,7 @@ import {
 } from "../util.ts";
 import { FAVICON_PATH } from "../favicon.ts";
 import { WEBFONT_CSS, WEBFONT_FAMILY, WEBFONT_PRELOAD } from "../webfont.ts";
+import { ANNOUNCEMENTS } from "../announce.ts";
 import {
   flattenFrontmatter,
   frontmatterTitle,
@@ -41,6 +42,14 @@ export interface TreeNode {
   path: string; // path relative to base dir; "" for root
   dir: boolean;
   children: TreeNode[];
+}
+
+/**
+ * A value as a JS literal for an inline `<script>`. `<` is escaped because a
+ * `</script>` anywhere in the data would otherwise end the block early.
+ */
+function embed(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
 /** HTML-escape text node content. */
@@ -1252,6 +1261,48 @@ ${WEBFONT_CSS}
     cursor: pointer; font-family: inherit; font-size: 13px;
   }
 
+  /* ── announcement notice ────────────────────────────────────────
+     A corner the reader is not reading in: opposite the margin contents
+     column, and clear of the filetree when both are on the same side. */
+  #mdrfc-notice {
+    position: fixed; z-index: 55; bottom: 16px; right: 16px;
+    width: 300px; max-width: calc(100vw - 32px);
+    padding: 12px 14px 12px; box-sizing: border-box;
+    background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px;
+    box-shadow: 0 8px 26px rgba(0,0,0,.18);
+    font-size: 12.5px; line-height: 1.5;
+    animation: mdrfc-notice-in .18s ease-out;
+  }
+  html[data-toc="right"] #mdrfc-notice { right: auto; left: 16px; }
+  html[data-toc="right"] body.mdrfc-has-sidebar #mdrfc-notice {
+    left: calc(var(--sidebar-w) + 16px);
+  }
+  @keyframes mdrfc-notice-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { #mdrfc-notice { animation: none; } }
+  #mdrfc-notice h3 {
+    margin: 0 22px .35em 0; font-size: 13px; line-height: 1.3;
+    border: 0; padding: 0;
+  }
+  #mdrfc-notice p { margin: 0 0 10px; color: var(--muted); }
+  #mdrfc-notice .notice-btns { display: flex; gap: 8px; }
+  #mdrfc-notice button {
+    flex: 1; padding: 6px 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--fg); border-radius: 4px;
+    cursor: pointer; font-family: inherit; font-size: 12.5px;
+  }
+  #mdrfc-notice button.yes { background: var(--code-bg); font-weight: 600; }
+  #mdrfc-notice button:hover { border-color: var(--link); color: var(--link); }
+  #mdrfc-notice .close {
+    position: absolute; top: 6px; right: 8px; flex: none;
+    width: auto; padding: 0 2px;
+    background: none; border: 0; color: var(--muted); font-size: 17px;
+    line-height: 1; cursor: pointer;
+  }
+
   /* ── command palette (Ctrl/Cmd-K) ───────────────────────────── */
   .mdrfc-p-backdrop {
     position: fixed; inset: 0; z-index: 100;
@@ -1397,6 +1448,7 @@ ${body}
     <button type="button" class="act" id="mdrfc-reset">Reset to defaults</button>
   </div>
 </div>
+<div id="mdrfc-notice" role="status" aria-live="polite" hidden></div>
 
 ${reloadScript}
 <script>window.__mdrfc = { dirMode: ${dirMode} };</script>
@@ -1681,6 +1733,79 @@ ${reloadScript}
       cancelFontSearch();
     }
   }
+
+  // ── announcements ──────────────────────────────────────────────────────
+  // A saved setting is never overwritten to show off a new default, so what a
+  // new default cannot do, a notice asks. One question, once: the answer —
+  // either answer — is recorded and that notice is finished. The tests live in
+  // ANN_WHEN and the offers in ANN_DO, named from the served list rather than
+  // carried in it, so nothing here evaluates text as code.
+  var ANN = ${embed(ANNOUNCEMENTS)};
+  var ANN_WHEN = {
+    "always": function(){ return true; },
+    "font-overridden": function(){ return !!rd("font", ""); }
+  };
+  var ANN_DO = {
+    // Dropping the choice lands on the stylesheet's stack, which the bundled
+    // family heads — the same thing an emptied font field does.
+    "use-bundled-font": function(){ pickFont(""); }
+  };
+  var notice = document.getElementById("mdrfc-notice");
+
+  function answered(a){ return !!rd("ann." + a.id, ""); }
+
+  function announce(){
+    if(!notice) return;
+    for(var i = 0; i < ANN.length; i++){
+      var a = ANN[i];
+      var when = ANN_WHEN[a.when];
+      if(answered(a) || !when || !when()) continue;
+      showNotice(a);
+      return;
+    }
+  }
+
+  function showNotice(a){
+    notice.textContent = "";
+    var h = document.createElement("h3");
+    h.textContent = a.title;
+    var p = document.createElement("p");
+    p.textContent = a.body;
+    var btns = document.createElement("div");
+    btns.className = "notice-btns";
+    btns.appendChild(noticeBtn(a.accept, "yes", function(){ answer(a, true); }));
+    btns.appendChild(noticeBtn(a.dismiss, "", function(){ answer(a, false); }));
+    var x = noticeBtn("\\u00d7", "close", function(){ answer(a, false); });
+    x.setAttribute("aria-label", "Dismiss");
+    notice.appendChild(x);
+    notice.appendChild(h);
+    notice.appendChild(p);
+    notice.appendChild(btns);
+    notice.hidden = false;
+  }
+
+  function noticeBtn(label, cls, onClick){
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    if(cls) b.className = cls;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  // Closing it counts as an answer: a notice that came back on the next page
+  // would be a nag, and the offer stays in the settings panel either way.
+  function answer(a, yes){
+    wr("ann." + a.id, yes ? "y" : "n");
+    if(yes){
+      var run = ANN_DO[a.action];
+      if(run) run();
+    }
+    notice.hidden = true;
+    notice.textContent = "";
+  }
+
+  announce();
 })();
 </script>
 <script>

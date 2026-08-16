@@ -56,6 +56,8 @@ FONT (web view)
   Pages are set in Iosevka Brick, served by mdrfc itself, so a machine with no
   monospace font of its own reads the same as one with a dozen. The settings
   panel switches to any installed family; the bundled one is listed there too.
+  A font already picked in a browser stays picked — the page offers the new
+  one in a notice you accept or dismiss once, and never overwrites the choice.
 
 TABLE OF CONTENTS (web view)
   Every heading is listed in the margin beside the text, where the list

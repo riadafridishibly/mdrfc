@@ -303,6 +303,9 @@ does the whole page until the font lands — the faces are declared
 `font-display: swap`, so nothing waits on them. Picking another family in the
 settings panel overrides it.
 
+A font you had already chosen is **not** replaced by it — see
+[Announcements](#announcements).
+
 To rebuild the faces from a fresh Iosevka-Brick checkout:
 
 ```sh
@@ -314,6 +317,38 @@ for w in Regular Oblique Bold BoldOblique; do
     --unicodes="$(cat src/webfonts/RANGES)"
 done
 ```
+
+## Announcements
+
+A setting you have saved is yours: a new default never overwrites it. So when
+mdrfc starts doing something your saved setting hides, the page offers it once
+instead of taking it — a small card in the corner with one button to accept and
+one to decline. Either answer is recorded in `localStorage`, and that notice is
+finished; closing it counts as declining.
+
+The bundled font is the first of them: pick a font in the settings panel and it
+stays picked, with the notice offering Iosevka Brick once. Accepting clears the
+saved font, which lands you back on the stylesheet's stack — exactly what
+emptying the font field does.
+
+Adding one is an entry in [`src/announce.ts`](src/announce.ts):
+
+```ts
+{
+  id: "bundled-font-1",     // change the id to announce something again
+  title: "mdrfc now ships a font",
+  body: "…",
+  accept: "Try it",
+  dismiss: "Keep mine",
+  when: "font-overridden",  // who it is worth showing to
+  action: "use-bundled-font" // what accepting does
+}
+```
+
+`when` and `action` name functions in the page's own registries (`ANN_WHEN` and
+`ANN_DO` in the settings script) rather than carrying code, so nothing served
+is ever evaluated as script. `when: "always"` covers a notice everyone should
+see.
 
 ## Live reload
 
@@ -338,6 +373,7 @@ src/
   search.ts        fzf path ranking + heading/content scan, mtime-cached
   fonts.ts         installed font families via fc-list + sfnt table scan
   webfont.ts       the bundled family: @font-face rules + face lookup
+  announce.ts      one-time notices about new defaults, accepted or dismissed
   open.ts          cross-platform browser open
   server.ts        node:http server + SSE live-reload + dir watcher + md tree
   types/           declarations for the one dependency that ships none
