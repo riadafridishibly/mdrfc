@@ -97,7 +97,7 @@ FLAGS
       --no-frontmatter      hide the frontmatter block (still stripped from body)
       --width <n>           content width in columns (default 72)
       --theme <auto|light|dark>  web color scheme (default auto)
-      --toc <off|top|left|right> web table of contents (default left)
+      --toc <off|top|left|right> web table of contents (default right)
   -h, --help                show this help
   -V, --version             show version
 ```
@@ -194,17 +194,22 @@ relative to the shallowest heading present, so a document whose sections all
 start at `##` isn't listed one step in. A document with one heading or none
 gets no list.
 
-By default the list sits in the margin to the left of the text, where it stays
-put as you read and lights the section you are in. There is room for it
+By default the list sits in the margin to the right of the text, where it
+stays put as you read and lights the section you are in. There is room for it
 because the text stops at 72 columns — the margin is space the document was
-never going to use. `--toc right` puts it on the other side; `--toc top` puts
-it in the flow instead, under the frontmatter block and above the text.
+never going to use. Entries are set quieter than the document, so the column
+is something to glance at rather than a second text beside the first.
+`--toc left` puts it on the other side, clear of the filetree in directory
+mode; `--toc top` puts it in the flow instead, under the frontmatter block
+and above the text.
 
 An entry too long for the column is cut short, and reads in full when you
 hover or tab to it: the whole of it is laid over the document at the entry's
 own place, so only the missing tail is new. The column is measured in the text
 size you are reading at, not in fixed pixels, so raising the font size widens
-it to match and an entry keeps the same words.
+it to match and an entry keeps the same words. It stops at 240px of that text
+(about 34 characters against the document's 72) however much margin there is:
+past that it stops reading as a margin and starts reading as a second column.
 
 The margin is measured, not assumed: the window size, the content width, the
 font size and the filetree sidebar all move it, and when what is left is too

@@ -143,20 +143,20 @@ describe("table of contents placement", () => {
     run(1600, { left: 500, right: 1100 });
     expect(mode()).toBe("right");
     expect(placed()).toBe(true);
-    expect(cssVar("--toc-w")).toBe("300px"); // 500px of room, capped
-    expect(cssVar("--toc-x")).toBe("962px"); // 24px clear of the column
+    expect(cssVar("--toc-w")).toBe("240px"); // 500px of room, capped
+    expect(cssVar("--toc-x")).toBe("992px"); // 24px clear of the column
   });
 
   test("centres the two of them together, not the text on its own", () => {
     localStorage.setItem("mdrfc.toc", "right");
     run(1600, { left: 500, right: 1100 });
-    // 324px out of the page box: the 300px column and the 24px gap. The text
+    // 264px out of the page box: the 240px column and the 24px gap. The text
     // gives up half of it and keeps the other half of its old margin, so the
-    // pair sits between margins of 338px — 500 less the 162 it moved.
-    expect(cssVar("--toc-pad-right")).toBe("324px");
+    // pair sits between margins of 368px — 500 less the 132 it moved.
+    expect(cssVar("--toc-pad-right")).toBe("264px");
     const main = document.querySelector("main")!.getBoundingClientRect();
-    expect(main.left).toBe(338);
-    expect(1600 - (Number(cssVar("--toc-x").slice(0, -2)) + 300)).toBe(338);
+    expect(main.left).toBe(368);
+    expect(1600 - (Number(cssVar("--toc-x").slice(0, -2)) + 240)).toBe(368);
   });
 
   test("a margin too thin on its own holds the column once both pay", () => {
@@ -165,32 +165,32 @@ describe("table of contents placement", () => {
     // 190px to the right of the text would not have held a 190px column and
     // its gap; the 190 sitting idle on the other side makes up the difference.
     expect(mode()).toBe("right");
-    expect(cssVar("--toc-w")).toBe("300px");
-    expect(document.querySelector("main")!.getBoundingClientRect().left).toBe(28);
+    expect(cssVar("--toc-w")).toBe("240px");
+    expect(document.querySelector("main")!.getBoundingClientRect().left).toBe(58);
   });
 
   test("mirrors that on the other side", () => {
     localStorage.setItem("mdrfc.toc", "left");
     run(1600, { left: 500, right: 1100 });
-    expect(cssVar("--toc-pad-left")).toBe("324px");
-    expect(cssVar("--toc-x")).toBe("338px"); // 662 - 24 - 300
+    expect(cssVar("--toc-pad-left")).toBe("264px");
+    expect(cssVar("--toc-x")).toBe("368px"); // 632 - 24 - 240
   });
 
   test("narrows the column to the room actually left", () => {
     localStorage.setItem("mdrfc.toc", "right");
-    run(1000, { left: 160, right: 840 });
+    run(1000, { left: 140, right: 860 });
     expect(mode()).toBe("right");
-    // 160 a side, less 12 to keep clear of the window, doubled: 296 for the
+    // 140 a side, less 12 to keep clear of the window, doubled: 256 for the
     // pair to share, and the gap comes out of that.
-    expect(cssVar("--toc-w")).toBe("272px");
+    expect(cssVar("--toc-w")).toBe("232px");
   });
 
   test("widens with the text size, so an entry holds the same words", () => {
     localStorage.setItem("mdrfc.toc", "right");
     document.documentElement.style.setProperty("--font-size", "28px");
     run(2500, { left: 600, right: 1800 });
-    expect(cssVar("--toc-w")).toBe("600px"); // the cap, at twice the type
-    expect(cssVar("--toc-x")).toBe("1524px"); // the gap doubles with it
+    expect(cssVar("--toc-w")).toBe("480px"); // the cap, at twice the type
+    expect(cssVar("--toc-x")).toBe("1584px"); // the gap doubles with it
   });
 
   test("and gives way sooner, a margin being thinner in larger type", () => {
@@ -254,7 +254,7 @@ describe("table of contents placement", () => {
   test("gives the reserved room back when there is no document to place by", () => {
     localStorage.setItem("mdrfc.toc", "right");
     run(1600, { left: 500, right: 1100 });
-    expect(cssVar("--toc-pad-right")).toBe("324px");
+    expect(cssVar("--toc-pad-right")).toBe("264px");
     document.querySelector("main")!.remove();
     (window as any).mdrfcToc.apply("right");
     expect(cssVar("--toc-pad-right")).toBe("0px");

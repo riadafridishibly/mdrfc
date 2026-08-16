@@ -462,7 +462,10 @@ function htmlTemplate(
   // characters to the ellipsis as the type grows. Ratios against the 14px
   // default, so a page nobody has resized is laid out exactly as before.
   var MIN_EM = 190 / 14;   // narrower than this a margin column reads as a scrap
-  var MAX_EM = 300 / 14;
+  // And wider than this it stops being a margin: 240px is ~34 characters of the
+  // page's own type against the text's 72, and the width the stylesheet falls
+  // back to when nothing has been measured yet.
+  var MAX_EM = 240 / 14;
   var GAP_EM = 24 / 14;    // clear space between the column and the document
   var EDGE_EM = 12 / 14;   // and between the column and the window, when pushed out
   var SPY = 84;      // a heading above this line counts as the section in view
@@ -1067,9 +1070,11 @@ ${WEBFONT_CSS}
   .mdrfc-toc-list .lvl-1 { padding-left: 1.3em; }
   .mdrfc-toc-list .lvl-2 { padding-left: 2.6em; }
   .mdrfc-toc-list .lvl-3 { padding-left: 3.9em; }
+  /* Quieter than the document beside it: the column is there to be glanced
+     at, and entries at full strength read as text competing with the text. */
   .mdrfc-toc a {
     display: block; padding: 1px 4px; border-radius: 3px;
-    color: var(--fg); text-decoration: none;
+    color: var(--muted); text-decoration: none;
   }
   .mdrfc-toc a:hover { background: var(--code-bg); color: var(--link); }
   .mdrfc-toc a.active { color: var(--link); font-weight: 600; }
@@ -1118,7 +1123,7 @@ ${WEBFONT_CSS}
     padding: 1px 4px; border-radius: 3px;
     font-size: 0.92em; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis;
-    color: var(--fg); background: var(--bg);
+    color: var(--muted); background: var(--bg);
     box-shadow: 0 0 0 1px var(--border), 0 6px 18px rgba(0,0,0,.18);
     pointer-events: none;   /* the entry underneath keeps the hover and click */
   }
