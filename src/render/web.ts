@@ -468,6 +468,7 @@ function htmlTemplate(
   var MAX_EM = 240 / 14;
   var GAP_EM = 24 / 14;    // clear space between the column and the document
   var EDGE_EM = 12 / 14;   // and between the column and the window, when pushed out
+  var PAD_EM = 16 / 14;    // and between the document and whatever is beside it
   var SPY = 84;      // a heading above this line counts as the section in view
 
   var mode = SERV, toc = null, links = [], targets = [], offsets = [], current = -1;
@@ -540,12 +541,27 @@ function htmlTemplate(
     if(a) showPeek(a); else hidePeek();
   }
 
-  // What the page box gives up to the column, on the side the column is on.
-  // The document is centred in what is left, which puts it and the column
-  // together in the middle of the room rather than the document alone.
+  // Below this the filetree lies over the document rather than beside it, so
+  // it takes nothing out of the room the page has to lay anything out in.
+  function overlaid(){
+    return !!window.matchMedia && window.matchMedia("(max-width: 720px)").matches;
+  }
+
+  // The page box the placement hands the document: where its left edge sits,
+  // and what is left over on its right. The box is set to the document's own
+  // width, so the text lands on the edge given rather than somewhere inside a
+  // wider box — where the text sits is the placement's to say, not the box's.
   function reserve(left, right){
-    root.style.setProperty("--toc-pad-left", Math.round(left) + "px");
-    root.style.setProperty("--toc-pad-right", Math.round(right) + "px");
+    root.style.setProperty("--pad-left", Math.round(left) + "px");
+    root.style.setProperty("--pad-right", Math.round(right) + "px");
+  }
+
+  // Hand the box back to the stylesheet, which is the only state the document's
+  // own width can be read in: measured inside a box the placement set, it can
+  // only report the width the placement last gave it.
+  function unreserve(){
+    root.style.removeProperty("--pad-left");
+    root.style.removeProperty("--pad-right");
   }
 
   // Remembered so the observer can tell a layout the placement caused from one
@@ -560,49 +576,63 @@ function htmlTemplate(
   function place(){
     hidePeek();
     root.classList.remove("mdrfc-toc-placed");
-    reserve(0, 0);
+    unreserve();
     var main = document.querySelector("main");
-    // Mid-swap there is no document to measure against. Nothing is reserved
+    // Mid-swap there is no document to measure against. No box is handed out
     // until there is one again, and the observer is told to trust nothing it
     // remembers from the last placement.
     if(!main){ lastW = -1; lastX = -1; return; }
-    if(!toc || mode === "off" || mode === "top"){
-      root.setAttribute("data-toc", mode);
-      settled(main);
-      return;
-    }
-    // Measured with nothing reserved: the document at its own width, in the
-    // middle of the room, with the margins it would have if there were no
-    // list at all. Both margins pay for the column, not just the one it
-    // stands in — reserving its width moves the document half that far the
-    // other way, so the two of them end up centred together. The narrower
-    // margin is what there is: it gives up as much as the other one does.
-    var rect = main.getBoundingClientRect();
     var em = size();
     var MIN_W = MIN_EM * em, MAX_W = MAX_EM * em;
-    var GAP = GAP_EM * em, EDGE = EDGE_EM * em;
+    var GAP = GAP_EM * em, EDGE = EDGE_EM * em, PAD = PAD_EM * em;
     var vw = root.clientWidth;
     var aside = document.getElementById("mdrfc-sidebar");
     // The width the tree is set to, not the box it currently occupies: it
     // slides in on a transform, and this runs in the frame the slide starts.
     // A rect read there reports the tree half absent and hands the column
     // room that is about to be taken back.
-    blocked = aside && !root.classList.contains("mdrfc-sidebar-collapsed")
+    blocked = aside && !root.classList.contains("mdrfc-sidebar-collapsed") && !overlaid()
       ? parseFloat(getComputedStyle(root).getPropertyValue("--sidebar-w")) || 0 : 0;
-    var span = 2 * (Math.min(rect.left - blocked, vw - rect.right) - EDGE);
-    if(span < MIN_W + GAP){
-      root.setAttribute("data-toc", "top");
+    // Where the text belongs before anything is asked of the margins: the
+    // middle of the window, whatever the filetree happens to be doing. Held
+    // there rather than centred in the room the tree leaves, so that opening
+    // the tree, closing it, or moving the list from one margin to the other
+    // moves only itself and never the text. A window too narrow to hold the
+    // document in the middle of itself pushes it off centre, as far as it has
+    // to and no further.
+    var c = main.getBoundingClientRect().width;
+    var lo = blocked + PAD, hi = Math.max(lo, vw - PAD - c);
+    var x = Math.min(Math.max((vw - c) / 2, lo), hi);
+    if(!toc || mode === "off" || mode === "top"){
+      reserve(x, Math.max(0, vw - x - c));
+      root.setAttribute("data-toc", mode);
       settled(main);
       return;
     }
-    var w = Math.min(MAX_W, span - GAP);
-    reserve(mode === "left" ? GAP + w : 0, mode === "right" ? GAP + w : 0);
-    rect = settled(main);
-    var x = mode === "left"
-      ? Math.max(blocked + EDGE, rect.left - GAP - w)
-      : Math.min(vw - EDGE - w, rect.right + GAP);
+    // The margin the list is asked to stand in, as it already is. When that
+    // holds the column, the list moves into room which was empty anyway and
+    // nothing else moves at all.
+    var free = (mode === "left" ? x - blocked : vw - x - c) - EDGE;
+    var w = Math.min(MAX_W, free - GAP);
+    if(free < MIN_W + GAP){
+      // Not on that side alone. Then both margins pay for the column, not just
+      // the one it stands in: it is given the whole of what is spare, less the
+      // gap, and the text is pushed off centre by however much that takes.
+      var span = vw - blocked - c - 2 * EDGE;
+      if(span < MIN_W + GAP){
+        reserve(x, Math.max(0, vw - x - c));
+        root.setAttribute("data-toc", "top");
+        settled(main);
+        return;
+      }
+      w = Math.min(MAX_W, span - GAP);
+      x = mode === "left" ? blocked + EDGE + w + GAP : vw - EDGE - w - GAP - c;
+    }
+    reserve(x, Math.max(0, vw - x - c));
+    settled(main);
     root.style.setProperty("--toc-w", Math.round(w) + "px");
-    root.style.setProperty("--toc-x", Math.round(x) + "px");
+    root.style.setProperty("--toc-x",
+      Math.round(mode === "left" ? x - GAP - w : x + c + GAP) + "px");
     root.setAttribute("data-toc", mode);
     root.classList.add("mdrfc-toc-placed");
   }
@@ -948,13 +978,12 @@ ${WEBFONT_CSS}
     font-size: var(--font-size);
     line-height: 1.6;
     margin: 0;
-    /* The margin contents column is reserved out of the page box rather than
-       drawn over the space beside the text. The document's own auto margins
-       then centre the pair — text and column together — instead of centring
-       the text and leaving the column to fend for itself in one half of the
-       room. Set by the placement script; nothing is reserved without it. */
-    padding: 2rem calc(1rem + var(--toc-pad-right, 0px))
-             2rem calc(1rem + var(--toc-pad-left, 0px));
+    /* Horizontal room is the placement script's to hand out: it sets the page
+       box to the document's own width and puts its left edge where the text
+       belongs — the middle of the window — so the text keeps one place through
+       the filetree opening and the contents column moving side to side. The
+       fallbacks are what a page with no script running gets. */
+    padding: 2rem var(--pad-right, 1rem) 2rem var(--pad-left, 1rem);
     -webkit-font-smoothing: antialiased;
   }
   main {
@@ -1171,12 +1200,14 @@ ${WEBFONT_CSS}
   .mdrfc-scroll::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-thumb-hover); }
   html::-webkit-scrollbar-corner,
   .mdrfc-scroll::-webkit-scrollbar-corner { background: transparent; }
+  /* Only the fallback differs from the page's: what the tree leaves, until the
+     placement has measured the room and said where the text goes. */
   body.mdrfc-has-sidebar {
-    padding-left: calc(var(--sidebar-w) + var(--toc-pad-left, 0px));
+    padding-left: var(--pad-left, calc(var(--sidebar-w) + 1rem));
   }
   html.mdrfc-sidebar-collapsed .mdrfc-sidebar { transform: translateX(-100%); }
   html.mdrfc-sidebar-collapsed body.mdrfc-has-sidebar {
-    padding-left: calc(1rem + var(--toc-pad-left, 0px));
+    padding-left: var(--pad-left, 1rem);
   }
 
   /* drag handle: sits on the sidebar's right edge, hidden when collapsed */
@@ -1212,7 +1243,7 @@ ${WEBFONT_CSS}
   /* narrow screens: sidebar overlays the content instead of reserving space */
   @media (max-width: 720px) {
     .mdrfc-sidebar { width: min(280px, 85vw); box-shadow: 2px 0 14px rgba(0,0,0,.25); }
-    body.mdrfc-has-sidebar { padding-left: calc(1rem + var(--toc-pad-left, 0px)); }
+    body.mdrfc-has-sidebar { padding-left: var(--pad-left, 1rem); }
     .mdrfc-resizer { display: none; }
   }
 
@@ -1403,10 +1434,11 @@ ${WEBFONT_CSS}
      There is no margin to put the list in: a fixed column prints on the first
      sheet and on none of the ones after it, and the space reserved for it
      would be blank on every one. The list prints where a document carries it,
-     at the top, and the text gets the whole page back. The reservation is an
-     inline property the placement script sets, hence the !important. */
+     at the top, and the text gets the whole page back — the filetree's column
+     with it. The page box is an inline property the placement script sets,
+     hence the !important. */
   @media print {
-    :root { --toc-pad-left: 0px !important; --toc-pad-right: 0px !important; }
+    :root { --pad-left: 1rem !important; --pad-right: 1rem !important; }
     html.mdrfc-js[data-toc="left"] .mdrfc-toc,
     html.mdrfc-js[data-toc="right"] .mdrfc-toc {
       position: static; width: auto; max-height: none; overflow: visible;
