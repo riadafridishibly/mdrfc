@@ -3,10 +3,10 @@
 Simple markdown viewer. **Terminal + web.** RFC-style monospace, 72-column width.
 
 ```
-mdrfc README.md              # render in terminal (paged via less)
-mdrfc docs/                  # directory: filetree + README
-mdrfc README.md --web        # serve HTML, open browser, live-reload on edit
-mdrfc docs/ --web            # serve dir with sidebar listing all .md files
+mdrfc README.md              # serve HTML, open browser, live-reload on edit
+mdrfc docs/                  # serve dir with sidebar listing all .md files
+mdrfc README.md --term       # render in terminal instead (paged via less)
+mdrfc docs/ --term           # directory: filetree + README
 cat foo.md | mdrfc           # stdin works too
 ```
 
@@ -14,8 +14,10 @@ cat foo.md | mdrfc           # stdin works too
 
 Markdown is for *reading*, not just rendering to HTML. mdrfc gives you two fast paths from the same source:
 
-- **Terminal** — RFC-text feel, monospace, 72-col reflow, optional color, paged through `less`.
-- **Web** — same 72ch column, same monospace, but proper HTML: real links, tables, syntax-highlighted code blocks, dark/light theme. With **live reload** so editing the file refreshes the browser instantly.
+- **Web** (the default) — a 72ch column set in the monospace face mdrfc ships with, and proper HTML: real links, tables, syntax-highlighted code blocks, dark/light theme. With **live reload** so editing the file refreshes the browser instantly.
+- **Terminal** (`--term`) — RFC-text feel, monospace, 72-col reflow, optional color, paged through `less`.
+
+Piping picks the terminal for you: with stdout on a pipe or a file, `mdrfc x.md | grep foo` and `mdrfc x.md > out.txt` render text rather than opening a tab. Pass `--web` to serve anyway.
 
 ## Install
 
@@ -53,9 +55,9 @@ modules, search, fonts, and live reload including atomic saves and files added
 while the server runs.
 
 ```sh
-node src/main.ts docs/ --web
-bun src/main.ts docs/ --web
-deno run --allow-read --allow-net --allow-env --allow-run --allow-sys src/main.ts docs/ --web
+node src/main.ts docs/
+bun src/main.ts docs/
+deno run --allow-read --allow-net --allow-env --allow-run --allow-sys src/main.ts docs/
 ```
 
 Deno's flags are all load-bearing: `--allow-env` because `chalk` (reached
@@ -81,15 +83,16 @@ untested.
 ## Usage
 
 ```
-mdrfc [file]              render file to terminal (paged via less)
-mdrfc [file] --web        serve rendered HTML and open browser
+mdrfc [file]              serve rendered HTML and open browser
+mdrfc [file] --term       render file to terminal instead (paged via less)
 mdrfc                     read markdown from stdin
-cat foo.md | mdrfc --web  stdin + web
+cat foo.md | mdrfc        stdin + web
 
 FLAGS
-  -w, --web                 serve via local HTTP server
+  -w, --web                 serve via local HTTP server (the default)
+  -t, --term, --no-web      render to the terminal instead
   -p, --port <n>            server port (default 2119, auto-increment if busy)
-      --no-open             don't auto-open browser (use with --web)
+      --no-open             don't auto-open browser
       --no-color            strip ANSI colors → pure RFC text
       --no-frontmatter      hide the frontmatter block (still stripped from body)
       --width <n>           content width in columns (default 72)
@@ -164,7 +167,7 @@ Give `mdrfc` a **directory** and it scans for `*.md` files (hidden files,
   serves `README.md`, and live-reload still fires on save.
 
 ```sh
-mdrfc docs/ --web
+mdrfc docs/
 ```
 
 ## Heading links
@@ -231,7 +234,7 @@ entries are dropped.
 
 ## Search
 
-In `--web` mode, **Cmd-K** (or Ctrl-K) opens a command palette.
+In the web view, **Cmd-K** (or Ctrl-K) opens a command palette.
 
 Serving a single file or stdin, it searches that document's headings — an empty
 query lists the whole outline. Serving a directory, it also searches every
@@ -283,11 +286,38 @@ abandons the search and restores the family in force.
 
 Families are collected from `fc-list` when fontconfig is present, plus a
 direct scan of the OS font directories that reads only each font's `name` and
-`post` tables.
+`post` tables. The bundled family is listed alongside them, tagged `bundled`.
+
+## Bundled font
+
+Pages are set in [Iosevka Brick](https://github.com/riadafridishibly/Iosevka-Brick),
+served by mdrfc itself, so a machine with no monospace font of its own reads
+the same as one with a dozen. Four faces ship as WOFF2 — regular, oblique,
+bold, bold oblique — served from `/_font/` and cached for a day.
+
+They are subset to the ranges a markdown document actually reaches for (Latin,
+Greek, Cyrillic, punctuation, currency, arrows, maths, box drawing, geometric
+symbols), which is 776 KB rather than the 2.1 MB the full faces weigh.
+Anything outside those ranges falls through to the system monospace stack, as
+does the whole page until the font lands — the faces are declared
+`font-display: swap`, so nothing waits on them. Picking another family in the
+settings panel overrides it.
+
+To rebuild the faces from a fresh Iosevka-Brick checkout:
+
+```sh
+for w in Regular Oblique Bold BoldOblique; do
+  uvx --from "fonttools[woff]" --with brotli pyftsubset \
+    dist/IosevkaBrick/WOFF2/IosevkaBrick-$w.woff2 \
+    --output-file=src/webfonts/IosevkaBrick-$w.woff2 \
+    --flavor=woff2 --layout-features='*' \
+    --unicodes="$(cat src/webfonts/RANGES)"
+done
+```
 
 ## Live reload
 
-With `--web` and a filesystem path (anything but stdin), mdrfc watches the
+With the web view and a filesystem path (anything but stdin), mdrfc watches the
 directory being served — not the individual file, so an editor that saves by
 renaming a temp file over the original doesn't break the watch after one save.
 Directory mode watches recursively, so files added or deleted while the server
@@ -307,6 +337,7 @@ src/
   frontmatter.ts   YAML/TOML frontmatter split + subset parser
   search.ts        fzf path ranking + heading/content scan, mtime-cached
   fonts.ts         installed font families via fc-list + sfnt table scan
+  webfont.ts       the bundled family: @font-face rules + face lookup
   open.ts          cross-platform browser open
   server.ts        node:http server + SSE live-reload + dir watcher + md tree
   types/           declarations for the one dependency that ships none
@@ -316,6 +347,7 @@ src/
   render/
     term.ts        marked + marked-terminal renderer; dir-mode tree
     web.ts         marked HTML + CSS template + sidebar filetree
+  webfonts/        the four subset Iosevka Brick WOFF2 faces
 test/
   harness.ts       the slice of `expect` these tests use, over node:test
 ```

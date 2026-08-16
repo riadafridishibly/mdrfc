@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import { closeSync, openSync, readSync, readdirSync, type Dirent } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
+import { WEBFONT_FAMILY } from "./webfont.ts";
 
 /**
  * Detect the fonts available on the host, flagging the monospace ones.
@@ -29,6 +30,8 @@ const MAX_TTC_FONTS = 256; // real collections hold a handful; cap a corrupt cou
 export interface SystemFont {
   name: string;
   mono: boolean;
+  /** Shipped with mdrfc as a webfont, so it is offered whether installed or not. */
+  bundled?: boolean;
 }
 
 let cache: SystemFont[] | null = null;
@@ -74,9 +77,13 @@ export function listSystemFonts(): SystemFont[] {
   // 3. curated defaults
   for (const d of DEFAULTS) addFamily(out, d, true);
 
-  cache = Array.from(out, ([name, mono]) => ({ name, mono })).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  );
+  // The bundled webfont is listed whether or not it is installed — the page
+  // serves it itself, so picking it works on a host that has never seen it.
+  out.delete(WEBFONT_FAMILY);
+
+  cache = Array.from(out, ([name, mono]): SystemFont => ({ name, mono }))
+    .concat({ name: WEBFONT_FAMILY, mono: true, bundled: true })
+    .sort((a, b) => a.name.localeCompare(b.name));
   return cache;
 }
 

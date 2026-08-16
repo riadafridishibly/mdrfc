@@ -32,7 +32,7 @@
     "start": "node src/main.ts",
     "test": "node --test \"test/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && node -e \"const fs=require('node:fs');fs.cpSync('src/client','dist/client',{recursive:true});fs.chmodSync('dist/main.js',0o755)\"",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && node -e \"const fs=require('node:fs');fs.cpSync('src/client','dist/client',{recursive:true});fs.cpSync('src/webfonts','dist/webfonts',{recursive:true,filter:s=>!s.endsWith('RANGES')});fs.chmodSync('dist/main.js',0o755)\"",
     "prepare": "npm run build",
     "prepublishOnly": "npm run typecheck && npm test"
   },

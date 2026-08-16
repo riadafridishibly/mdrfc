@@ -9,6 +9,7 @@ import {
   type TocMode,
 } from "../util.ts";
 import { FAVICON_PATH } from "../favicon.ts";
+import { WEBFONT_CSS, WEBFONT_FAMILY, WEBFONT_PRELOAD } from "../webfont.ts";
 import {
   flattenFrontmatter,
   frontmatterTitle,
@@ -873,8 +874,10 @@ function htmlTemplate(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="${FAVICON_PATH}">
+<link rel="preload" as="font" type="font/woff2" href="${WEBFONT_PRELOAD}" crossorigin>
 <title>${docTitle ? esc(docTitle) : "mdrfc"}</title>
 <style>
+${WEBFONT_CSS}
   :root {
     --font-size: 14px;
     --content-w: ${width}ch;
@@ -911,8 +914,8 @@ function htmlTemplate(
   body {
     background: var(--bg);
     color: var(--fg);
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-                 "Liberation Mono", monospace;
+    font-family: "${WEBFONT_FAMILY}", ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+                 Consolas, "Liberation Mono", monospace;
     font-size: var(--font-size);
     line-height: 1.6;
     margin: 0;
@@ -1431,7 +1434,7 @@ ${reloadScript}
     themeSel.value = v;
   }
   function applyFont(f){
-    var fam = f ? '"'+f.replace(/"/g,"")+'", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : "";
+    var fam = f ? '"'+f.replace(/"/g,"")+'", "${WEBFONT_FAMILY}", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : "";
     document.body.style.fontFamily = fam;
   }
   function applySize(s){
@@ -1569,7 +1572,7 @@ ${reloadScript}
       if(GENERIC.test(fam)) continue;
       for(var k = 0; k < fonts.length; k++){
         if(fonts[k].name === fam){
-          fontInput.placeholder = fam + " (system default)";
+          fontInput.placeholder = fam + (fonts[k].bundled ? " (bundled default)" : " (system default)");
           return;
         }
       }
@@ -1609,7 +1612,7 @@ ${reloadScript}
       return;
     }
     shown.forEach(function(f, i){
-      var li = row(f.name, f.mono ? "mono" : "", false);
+      var li = row(f.name, f.bundled ? "bundled" : f.mono ? "mono" : "", false);
       li.style.fontFamily = '"' + f.name.replace(/"/g, "") + '", ui-monospace, monospace';
       li.addEventListener("click", function(){ pickFont(f.name); });
       li.addEventListener("mousemove", function(){ setActive(i); });
