@@ -13,6 +13,7 @@ import { openBrowser } from "./open.ts";
 import { listSystemFonts } from "./fonts.ts";
 import { isExtendedQuery, search } from "./search.ts";
 import { FAVICON_PATH, FAVICON_SVG } from "./favicon.ts";
+import { readWebfont, WEBFONT_PATH, WEBFONT_ROOT } from "./webfont.ts";
 import type { RenderOpts } from "./util.ts";
 
 // The browser-side runtime, read off disk at startup instead of imported: these
@@ -246,7 +247,16 @@ export async function startServer(opts: ServerOpts): Promise<void> {
     body: string,
     extra: Record<string, string> = {}
   ): void {
-    const buf = Buffer.from(body, "utf8");
+    sendBytes(res, status, type, Buffer.from(body, "utf8"), extra);
+  }
+
+  function sendBytes(
+    res: ServerResponse,
+    status: number,
+    type: string,
+    buf: Buffer,
+    extra: Record<string, string> = {}
+  ): void {
     res.writeHead(status, {
       "content-type": type,
       "content-length": buf.byteLength,
@@ -292,6 +302,24 @@ export async function startServer(opts: ServerOpts): Promise<void> {
     }
     if (u.pathname === "/favicon.ico") {
       res.writeHead(204).end();
+      return;
+    }
+
+    // The bundled typeface. Cached indefinitely, unlike everything else here:
+    // the faces are three quarters of a megabyte and only change when mdrfc
+    // itself is upgraded, which changes the URL they are served on. The names
+    // are checked against the shipped list, not the disk.
+    if (u.pathname.startsWith(WEBFONT_ROOT)) {
+      const font = u.pathname.startsWith(WEBFONT_PATH)
+        ? readWebfont(u.pathname.slice(WEBFONT_PATH.length))
+        : null; // a face from a version that is no longer the one running
+      if (font) {
+        sendBytes(res, 200, "font/woff2", font, {
+          "cache-control": "max-age=31536000, immutable",
+        });
+      } else {
+        send(res, 404, "text/plain; charset=utf-8", "no such font");
+      }
       return;
     }
 

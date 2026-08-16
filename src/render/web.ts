@@ -9,6 +9,8 @@ import {
   type TocMode,
 } from "../util.ts";
 import { FAVICON_PATH } from "../favicon.ts";
+import { WEBFONT_CSS, WEBFONT_FAMILY, WEBFONT_PRELOAD } from "../webfont.ts";
+import { ANNOUNCEMENTS } from "../announce.ts";
 import {
   flattenFrontmatter,
   frontmatterTitle,
@@ -40,6 +42,14 @@ export interface TreeNode {
   path: string; // path relative to base dir; "" for root
   dir: boolean;
   children: TreeNode[];
+}
+
+/**
+ * A value as a JS literal for an inline `<script>`. `<` is escaped because a
+ * `</script>` anywhere in the data would otherwise end the block early.
+ */
+function embed(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
 /** HTML-escape text node content. */
@@ -452,9 +462,13 @@ function htmlTemplate(
   // characters to the ellipsis as the type grows. Ratios against the 14px
   // default, so a page nobody has resized is laid out exactly as before.
   var MIN_EM = 190 / 14;   // narrower than this a margin column reads as a scrap
-  var MAX_EM = 300 / 14;
+  // And wider than this it stops being a margin: 240px is ~34 characters of the
+  // page's own type against the text's 72, and the width the stylesheet falls
+  // back to when nothing has been measured yet.
+  var MAX_EM = 240 / 14;
   var GAP_EM = 24 / 14;    // clear space between the column and the document
   var EDGE_EM = 12 / 14;   // and between the column and the window, when pushed out
+  var PAD_EM = 16 / 14;    // and between the document and whatever is beside it
   var SPY = 84;      // a heading above this line counts as the section in view
 
   var mode = SERV, toc = null, links = [], targets = [], offsets = [], current = -1;
@@ -527,12 +541,27 @@ function htmlTemplate(
     if(a) showPeek(a); else hidePeek();
   }
 
-  // What the page box gives up to the column, on the side the column is on.
-  // The document is centred in what is left, which puts it and the column
-  // together in the middle of the room rather than the document alone.
+  // Below this the filetree lies over the document rather than beside it, so
+  // it takes nothing out of the room the page has to lay anything out in.
+  function overlaid(){
+    return !!window.matchMedia && window.matchMedia("(max-width: 720px)").matches;
+  }
+
+  // The page box the placement hands the document: where its left edge sits,
+  // and what is left over on its right. The box is set to the document's own
+  // width, so the text lands on the edge given rather than somewhere inside a
+  // wider box — where the text sits is the placement's to say, not the box's.
   function reserve(left, right){
-    root.style.setProperty("--toc-pad-left", Math.round(left) + "px");
-    root.style.setProperty("--toc-pad-right", Math.round(right) + "px");
+    root.style.setProperty("--pad-left", Math.round(left) + "px");
+    root.style.setProperty("--pad-right", Math.round(right) + "px");
+  }
+
+  // Hand the box back to the stylesheet, which is the only state the document's
+  // own width can be read in: measured inside a box the placement set, it can
+  // only report the width the placement last gave it.
+  function unreserve(){
+    root.style.removeProperty("--pad-left");
+    root.style.removeProperty("--pad-right");
   }
 
   // Remembered so the observer can tell a layout the placement caused from one
@@ -547,49 +576,63 @@ function htmlTemplate(
   function place(){
     hidePeek();
     root.classList.remove("mdrfc-toc-placed");
-    reserve(0, 0);
+    unreserve();
     var main = document.querySelector("main");
-    // Mid-swap there is no document to measure against. Nothing is reserved
+    // Mid-swap there is no document to measure against. No box is handed out
     // until there is one again, and the observer is told to trust nothing it
     // remembers from the last placement.
     if(!main){ lastW = -1; lastX = -1; return; }
-    if(!toc || mode === "off" || mode === "top"){
-      root.setAttribute("data-toc", mode);
-      settled(main);
-      return;
-    }
-    // Measured with nothing reserved: the document at its own width, in the
-    // middle of the room, with the margins it would have if there were no
-    // list at all. Both margins pay for the column, not just the one it
-    // stands in — reserving its width moves the document half that far the
-    // other way, so the two of them end up centred together. The narrower
-    // margin is what there is: it gives up as much as the other one does.
-    var rect = main.getBoundingClientRect();
     var em = size();
     var MIN_W = MIN_EM * em, MAX_W = MAX_EM * em;
-    var GAP = GAP_EM * em, EDGE = EDGE_EM * em;
+    var GAP = GAP_EM * em, EDGE = EDGE_EM * em, PAD = PAD_EM * em;
     var vw = root.clientWidth;
     var aside = document.getElementById("mdrfc-sidebar");
     // The width the tree is set to, not the box it currently occupies: it
     // slides in on a transform, and this runs in the frame the slide starts.
     // A rect read there reports the tree half absent and hands the column
     // room that is about to be taken back.
-    blocked = aside && !root.classList.contains("mdrfc-sidebar-collapsed")
+    blocked = aside && !root.classList.contains("mdrfc-sidebar-collapsed") && !overlaid()
       ? parseFloat(getComputedStyle(root).getPropertyValue("--sidebar-w")) || 0 : 0;
-    var span = 2 * (Math.min(rect.left - blocked, vw - rect.right) - EDGE);
-    if(span < MIN_W + GAP){
-      root.setAttribute("data-toc", "top");
+    // Where the text belongs before anything is asked of the margins: the
+    // middle of the window, whatever the filetree happens to be doing. Held
+    // there rather than centred in the room the tree leaves, so that opening
+    // the tree, closing it, or moving the list from one margin to the other
+    // moves only itself and never the text. A window too narrow to hold the
+    // document in the middle of itself pushes it off centre, as far as it has
+    // to and no further.
+    var c = main.getBoundingClientRect().width;
+    var lo = blocked + PAD, hi = Math.max(lo, vw - PAD - c);
+    var x = Math.min(Math.max((vw - c) / 2, lo), hi);
+    if(!toc || mode === "off" || mode === "top"){
+      reserve(x, Math.max(0, vw - x - c));
+      root.setAttribute("data-toc", mode);
       settled(main);
       return;
     }
-    var w = Math.min(MAX_W, span - GAP);
-    reserve(mode === "left" ? GAP + w : 0, mode === "right" ? GAP + w : 0);
-    rect = settled(main);
-    var x = mode === "left"
-      ? Math.max(blocked + EDGE, rect.left - GAP - w)
-      : Math.min(vw - EDGE - w, rect.right + GAP);
+    // The margin the list is asked to stand in, as it already is. When that
+    // holds the column, the list moves into room which was empty anyway and
+    // nothing else moves at all.
+    var free = (mode === "left" ? x - blocked : vw - x - c) - EDGE;
+    var w = Math.min(MAX_W, free - GAP);
+    if(free < MIN_W + GAP){
+      // Not on that side alone. Then both margins pay for the column, not just
+      // the one it stands in: it is given the whole of what is spare, less the
+      // gap, and the text is pushed off centre by however much that takes.
+      var span = vw - blocked - c - 2 * EDGE;
+      if(span < MIN_W + GAP){
+        reserve(x, Math.max(0, vw - x - c));
+        root.setAttribute("data-toc", "top");
+        settled(main);
+        return;
+      }
+      w = Math.min(MAX_W, span - GAP);
+      x = mode === "left" ? blocked + EDGE + w + GAP : vw - EDGE - w - GAP - c;
+    }
+    reserve(x, Math.max(0, vw - x - c));
+    settled(main);
     root.style.setProperty("--toc-w", Math.round(w) + "px");
-    root.style.setProperty("--toc-x", Math.round(x) + "px");
+    root.style.setProperty("--toc-x",
+      Math.round(mode === "left" ? x - GAP - w : x + c + GAP) + "px");
     root.setAttribute("data-toc", mode);
     root.classList.add("mdrfc-toc-placed");
   }
@@ -873,8 +916,27 @@ function htmlTemplate(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="${FAVICON_PATH}">
+<script>
+(function(){
+  // Preloading the regular face only pays on a page that paints in it. A
+  // reader with a font of their own renders none of it, so they are not made
+  // to fetch 180 KB they will not use — which the browser would warn about
+  // besides. Storage is read here rather than waited for: the face has to be
+  // asked for before the first paint or the preload is pointless.
+  try {
+    var saved = localStorage.getItem("mdrfc.font");
+    if(saved && saved !== ${JSON.stringify(WEBFONT_FAMILY)}) return;
+  } catch(e){}
+  var l = document.createElement("link");
+  l.rel = "preload"; l.as = "font"; l.type = "font/woff2";
+  l.href = ${JSON.stringify(WEBFONT_PRELOAD)};
+  l.crossOrigin = "anonymous";
+  document.head.appendChild(l);
+})();
+</script>
 <title>${docTitle ? esc(docTitle) : "mdrfc"}</title>
 <style>
+${WEBFONT_CSS}
   :root {
     --font-size: 14px;
     --content-w: ${width}ch;
@@ -911,18 +973,17 @@ function htmlTemplate(
   body {
     background: var(--bg);
     color: var(--fg);
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-                 "Liberation Mono", monospace;
+    font-family: "${WEBFONT_FAMILY}", ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+                 Consolas, "Liberation Mono", monospace;
     font-size: var(--font-size);
     line-height: 1.6;
     margin: 0;
-    /* The margin contents column is reserved out of the page box rather than
-       drawn over the space beside the text. The document's own auto margins
-       then centre the pair — text and column together — instead of centring
-       the text and leaving the column to fend for itself in one half of the
-       room. Set by the placement script; nothing is reserved without it. */
-    padding: 2rem calc(1rem + var(--toc-pad-right, 0px))
-             2rem calc(1rem + var(--toc-pad-left, 0px));
+    /* Horizontal room is the placement script's to hand out: it sets the page
+       box to the document's own width and puts its left edge where the text
+       belongs — the middle of the window — so the text keeps one place through
+       the filetree opening and the contents column moving side to side. The
+       fallbacks are what a page with no script running gets. */
+    padding: 2rem var(--pad-right, 1rem) 2rem var(--pad-left, 1rem);
     -webkit-font-smoothing: antialiased;
   }
   main {
@@ -1038,9 +1099,11 @@ function htmlTemplate(
   .mdrfc-toc-list .lvl-1 { padding-left: 1.3em; }
   .mdrfc-toc-list .lvl-2 { padding-left: 2.6em; }
   .mdrfc-toc-list .lvl-3 { padding-left: 3.9em; }
+  /* Quieter than the document beside it: the column is there to be glanced
+     at, and entries at full strength read as text competing with the text. */
   .mdrfc-toc a {
     display: block; padding: 1px 4px; border-radius: 3px;
-    color: var(--fg); text-decoration: none;
+    color: var(--muted); text-decoration: none;
   }
   .mdrfc-toc a:hover { background: var(--code-bg); color: var(--link); }
   .mdrfc-toc a.active { color: var(--link); font-weight: 600; }
@@ -1089,7 +1152,7 @@ function htmlTemplate(
     padding: 1px 4px; border-radius: 3px;
     font-size: 0.92em; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis;
-    color: var(--fg); background: var(--bg);
+    color: var(--muted); background: var(--bg);
     box-shadow: 0 0 0 1px var(--border), 0 6px 18px rgba(0,0,0,.18);
     pointer-events: none;   /* the entry underneath keeps the hover and click */
   }
@@ -1137,12 +1200,14 @@ function htmlTemplate(
   .mdrfc-scroll::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-thumb-hover); }
   html::-webkit-scrollbar-corner,
   .mdrfc-scroll::-webkit-scrollbar-corner { background: transparent; }
+  /* Only the fallback differs from the page's: what the tree leaves, until the
+     placement has measured the room and said where the text goes. */
   body.mdrfc-has-sidebar {
-    padding-left: calc(var(--sidebar-w) + var(--toc-pad-left, 0px));
+    padding-left: var(--pad-left, calc(var(--sidebar-w) + 1rem));
   }
   html.mdrfc-sidebar-collapsed .mdrfc-sidebar { transform: translateX(-100%); }
   html.mdrfc-sidebar-collapsed body.mdrfc-has-sidebar {
-    padding-left: calc(1rem + var(--toc-pad-left, 0px));
+    padding-left: var(--pad-left, 1rem);
   }
 
   /* drag handle: sits on the sidebar's right edge, hidden when collapsed */
@@ -1178,7 +1243,7 @@ function htmlTemplate(
   /* narrow screens: sidebar overlays the content instead of reserving space */
   @media (max-width: 720px) {
     .mdrfc-sidebar { width: min(280px, 85vw); box-shadow: 2px 0 14px rgba(0,0,0,.25); }
-    body.mdrfc-has-sidebar { padding-left: calc(1rem + var(--toc-pad-left, 0px)); }
+    body.mdrfc-has-sidebar { padding-left: var(--pad-left, 1rem); }
     .mdrfc-resizer { display: none; }
   }
 
@@ -1247,6 +1312,52 @@ function htmlTemplate(
     width: 100%; padding: 7px; border: 1px solid var(--border);
     background: var(--code-bg); color: var(--fg); border-radius: 4px;
     cursor: pointer; font-family: inherit; font-size: 13px;
+  }
+
+  /* ── announcement notice ────────────────────────────────────────
+     A corner the reader is not reading in: opposite the margin contents
+     column, and clear of the filetree when both are on the same side. */
+  #mdrfc-notice {
+    position: fixed; z-index: 55; bottom: 16px; right: 16px;
+    width: 300px; max-width: calc(100vw - 32px);
+    padding: 12px 14px 12px; box-sizing: border-box;
+    background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px;
+    box-shadow: 0 8px 26px rgba(0,0,0,.18);
+    font-size: 12.5px; line-height: 1.5;
+    animation: mdrfc-notice-in .18s ease-out;
+  }
+  html[data-toc="right"] #mdrfc-notice { right: auto; left: 16px; }
+  html[data-toc="right"] body.mdrfc-has-sidebar #mdrfc-notice {
+    left: calc(var(--sidebar-w) + 16px);
+  }
+  /* A collapsed filetree is off-screen, so there is nothing to clear. */
+  html[data-toc="right"].mdrfc-sidebar-collapsed body.mdrfc-has-sidebar #mdrfc-notice {
+    left: 16px;
+  }
+  @keyframes mdrfc-notice-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { #mdrfc-notice { animation: none; } }
+  #mdrfc-notice h3 {
+    margin: 0 22px .35em 0; font-size: 13px; line-height: 1.3;
+    border: 0; padding: 0;
+  }
+  #mdrfc-notice p { margin: 0 0 10px; color: var(--muted); }
+  #mdrfc-notice .notice-btns { display: flex; gap: 8px; }
+  #mdrfc-notice button {
+    flex: 1; padding: 6px 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--fg); border-radius: 4px;
+    cursor: pointer; font-family: inherit; font-size: 12.5px;
+  }
+  #mdrfc-notice button.yes { background: var(--code-bg); font-weight: 600; }
+  #mdrfc-notice button:hover { border-color: var(--link); color: var(--link); }
+  #mdrfc-notice .close {
+    position: absolute; top: 6px; right: 8px; flex: none;
+    width: auto; padding: 0 2px;
+    background: none; border: 0; color: var(--muted); font-size: 17px;
+    line-height: 1; cursor: pointer;
   }
 
   /* ── command palette (Ctrl/Cmd-K) ───────────────────────────── */
@@ -1323,10 +1434,11 @@ function htmlTemplate(
      There is no margin to put the list in: a fixed column prints on the first
      sheet and on none of the ones after it, and the space reserved for it
      would be blank on every one. The list prints where a document carries it,
-     at the top, and the text gets the whole page back. The reservation is an
-     inline property the placement script sets, hence the !important. */
+     at the top, and the text gets the whole page back — the filetree's column
+     with it. The page box is an inline property the placement script sets,
+     hence the !important. */
   @media print {
-    :root { --toc-pad-left: 0px !important; --toc-pad-right: 0px !important; }
+    :root { --pad-left: 1rem !important; --pad-right: 1rem !important; }
     html.mdrfc-js[data-toc="left"] .mdrfc-toc,
     html.mdrfc-js[data-toc="right"] .mdrfc-toc {
       position: static; width: auto; max-height: none; overflow: visible;
@@ -1394,6 +1506,7 @@ ${body}
     <button type="button" class="act" id="mdrfc-reset">Reset to defaults</button>
   </div>
 </div>
+<div id="mdrfc-notice" role="status" aria-live="polite" hidden></div>
 
 ${reloadScript}
 <script>window.__mdrfc = { dirMode: ${dirMode} };</script>
@@ -1431,7 +1544,7 @@ ${reloadScript}
     themeSel.value = v;
   }
   function applyFont(f){
-    var fam = f ? '"'+f.replace(/"/g,"")+'", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : "";
+    var fam = f ? '"'+f.replace(/"/g,"")+'", "${WEBFONT_FAMILY}", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : "";
     document.body.style.fontFamily = fam;
   }
   function applySize(s){
@@ -1569,7 +1682,7 @@ ${reloadScript}
       if(GENERIC.test(fam)) continue;
       for(var k = 0; k < fonts.length; k++){
         if(fonts[k].name === fam){
-          fontInput.placeholder = fam + " (system default)";
+          fontInput.placeholder = fam + (fonts[k].bundled ? " (bundled default)" : " (system default)");
           return;
         }
       }
@@ -1609,7 +1722,7 @@ ${reloadScript}
       return;
     }
     shown.forEach(function(f, i){
-      var li = row(f.name, f.mono ? "mono" : "", false);
+      var li = row(f.name, f.bundled ? "bundled" : f.mono ? "mono" : "", false);
       li.style.fontFamily = '"' + f.name.replace(/"/g, "") + '", ui-monospace, monospace';
       li.addEventListener("click", function(){ pickFont(f.name); });
       li.addEventListener("mousemove", function(){ setActive(i); });
@@ -1678,6 +1791,87 @@ ${reloadScript}
       cancelFontSearch();
     }
   }
+
+  // ── announcements ──────────────────────────────────────────────────────
+  // A saved setting is never overwritten to show off a new default, so what a
+  // new default cannot do, a notice asks. One question, once: the answer —
+  // either answer — is recorded and that notice is finished. The tests live in
+  // ANN_WHEN and the offers in ANN_DO, named from the served list rather than
+  // carried in it, so nothing here evaluates text as code.
+  var ANN = ${embed(ANNOUNCEMENTS)};
+  var ANN_WHEN = {
+    "always": function(){ return true; },
+    // Their own font, and not the bundled one under another route: picking
+    // "${WEBFONT_FAMILY}" from the list saves it like any other family, and
+    // offering someone the font they are already reading in — then dropping
+    // their choice to give it to them — is worse than saying nothing.
+    "font-overridden": function(){
+      var f = rd("font", "");
+      return !!f && f !== ${JSON.stringify(WEBFONT_FAMILY)};
+    }
+  };
+  var ANN_DO = {
+    // Dropping the choice lands on the stylesheet's stack, which the bundled
+    // family heads — the same thing an emptied font field does.
+    "use-bundled-font": function(){ pickFont(""); }
+  };
+  var notice = document.getElementById("mdrfc-notice");
+
+  function answered(a){ return !!rd("ann." + a.id, ""); }
+
+  function announce(){
+    if(!notice) return;
+    for(var i = 0; i < ANN.length; i++){
+      var a = ANN[i];
+      var when = ANN_WHEN[a.when];
+      if(answered(a) || !when || !when()) continue;
+      showNotice(a);
+      return;
+    }
+  }
+
+  function showNotice(a){
+    notice.textContent = "";
+    var h = document.createElement("h3");
+    h.textContent = a.title;
+    var p = document.createElement("p");
+    p.textContent = a.body;
+    var btns = document.createElement("div");
+    btns.className = "notice-btns";
+    btns.appendChild(noticeBtn(a.accept, "yes", function(){ answer(a, true); }));
+    btns.appendChild(noticeBtn(a.dismiss, "", function(){ answer(a, false); }));
+    var x = noticeBtn("\\u00d7", "close", function(){ answer(a, false); });
+    x.setAttribute("aria-label", "Dismiss");
+    notice.appendChild(x);
+    notice.appendChild(h);
+    notice.appendChild(p);
+    notice.appendChild(btns);
+    notice.hidden = false;
+  }
+
+  function noticeBtn(label, cls, onClick){
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    if(cls) b.className = cls;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  // Closing it counts as an answer: a notice that came back on the next page
+  // would be a nag, and the offer stays in the settings panel either way.
+  function answer(a, yes){
+    wr("ann." + a.id, yes ? "y" : "n");
+    if(yes){
+      var run = ANN_DO[a.action];
+      if(run) run();
+    }
+    notice.hidden = true;
+    notice.textContent = "";
+    announce();  // whatever was queued behind it, if anything ever is
+  }
+
+  announce();
 })();
 </script>
 <script>

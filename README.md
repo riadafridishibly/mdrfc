@@ -3,10 +3,10 @@
 Simple markdown viewer. **Terminal + web.** RFC-style monospace, 72-column width.
 
 ```
-mdrfc README.md              # render in terminal (paged via less)
-mdrfc docs/                  # directory: filetree + README
-mdrfc README.md --web        # serve HTML, open browser, live-reload on edit
-mdrfc docs/ --web            # serve dir with sidebar listing all .md files
+mdrfc README.md              # serve HTML, open browser, live-reload on edit
+mdrfc docs/                  # serve dir with sidebar listing all .md files
+mdrfc README.md --term       # render in terminal instead (paged via less)
+mdrfc docs/ --term           # directory: filetree + README
 cat foo.md | mdrfc           # stdin works too
 ```
 
@@ -14,8 +14,10 @@ cat foo.md | mdrfc           # stdin works too
 
 Markdown is for *reading*, not just rendering to HTML. mdrfc gives you two fast paths from the same source:
 
-- **Terminal** — RFC-text feel, monospace, 72-col reflow, optional color, paged through `less`.
-- **Web** — same 72ch column, same monospace, but proper HTML: real links, tables, syntax-highlighted code blocks, dark/light theme. With **live reload** so editing the file refreshes the browser instantly.
+- **Web** (the default) — a 72ch column set in the monospace face mdrfc ships with, and proper HTML: real links, tables, syntax-highlighted code blocks, dark/light theme. With **live reload** so editing the file refreshes the browser instantly.
+- **Terminal** (`--term`) — RFC-text feel, monospace, 72-col reflow, optional color, paged through `less`.
+
+Piping picks the terminal for you: with stdout on a pipe or a file, `mdrfc x.md | grep foo` and `mdrfc x.md > out.txt` render text rather than opening a tab. So does an SSH session with no display, where the browser would open on the wrong machine. Pass `--web` to serve anyway.
 
 ## Install
 
@@ -53,9 +55,9 @@ modules, search, fonts, and live reload including atomic saves and files added
 while the server runs.
 
 ```sh
-node src/main.ts docs/ --web
-bun src/main.ts docs/ --web
-deno run --allow-read --allow-net --allow-env --allow-run --allow-sys src/main.ts docs/ --web
+node src/main.ts docs/
+bun src/main.ts docs/
+deno run --allow-read --allow-net --allow-env --allow-run --allow-sys src/main.ts docs/
 ```
 
 Deno's flags are all load-bearing: `--allow-env` because `chalk` (reached
@@ -81,20 +83,21 @@ untested.
 ## Usage
 
 ```
-mdrfc [file]              render file to terminal (paged via less)
-mdrfc [file] --web        serve rendered HTML and open browser
+mdrfc [file]              serve rendered HTML and open browser
+mdrfc [file] --term       render file to terminal instead (paged via less)
 mdrfc                     read markdown from stdin
-cat foo.md | mdrfc --web  stdin + web
+cat foo.md | mdrfc        stdin + web
 
 FLAGS
-  -w, --web                 serve via local HTTP server
+  -w, --web                 serve via local HTTP server (the default)
+  -t, --term, --no-web      render to the terminal instead
   -p, --port <n>            server port (default 2119, auto-increment if busy)
-      --no-open             don't auto-open browser (use with --web)
+      --no-open             don't auto-open browser
       --no-color            strip ANSI colors → pure RFC text
       --no-frontmatter      hide the frontmatter block (still stripped from body)
       --width <n>           content width in columns (default 72)
       --theme <auto|light|dark>  web color scheme (default auto)
-      --toc <off|top|left|right> web table of contents (default left)
+      --toc <off|top|left|right> web table of contents (default right)
   -h, --help                show this help
   -V, --version             show version
 ```
@@ -164,7 +167,7 @@ Give `mdrfc` a **directory** and it scans for `*.md` files (hidden files,
   serves `README.md`, and live-reload still fires on save.
 
 ```sh
-mdrfc docs/ --web
+mdrfc docs/
 ```
 
 ## Heading links
@@ -191,17 +194,22 @@ relative to the shallowest heading present, so a document whose sections all
 start at `##` isn't listed one step in. A document with one heading or none
 gets no list.
 
-By default the list sits in the margin to the left of the text, where it stays
-put as you read and lights the section you are in. There is room for it
+By default the list sits in the margin to the right of the text, where it
+stays put as you read and lights the section you are in. There is room for it
 because the text stops at 72 columns — the margin is space the document was
-never going to use. `--toc right` puts it on the other side; `--toc top` puts
-it in the flow instead, under the frontmatter block and above the text.
+never going to use. Entries are set quieter than the document, so the column
+is something to glance at rather than a second text beside the first.
+`--toc left` puts it on the other side, clear of the filetree in directory
+mode; `--toc top` puts it in the flow instead, under the frontmatter block
+and above the text.
 
 An entry too long for the column is cut short, and reads in full when you
 hover or tab to it: the whole of it is laid over the document at the entry's
 own place, so only the missing tail is new. The column is measured in the text
 size you are reading at, not in fixed pixels, so raising the font size widens
-it to match and an entry keeps the same words.
+it to match and an entry keeps the same words. It stops at 240px of that text
+(about 34 characters against the document's 72) however much margin there is:
+past that it stops reading as a margin and starts reading as a second column.
 
 The margin is measured, not assumed: the window size, the content width, the
 font size and the filetree sidebar all move it, and when what is left is too
@@ -231,7 +239,7 @@ entries are dropped.
 
 ## Search
 
-In `--web` mode, **Cmd-K** (or Ctrl-K) opens a command palette.
+In the web view, **Cmd-K** (or Ctrl-K) opens a command palette.
 
 Serving a single file or stdin, it searches that document's headings — an empty
 query lists the whole outline. Serving a directory, it also searches every
@@ -283,11 +291,74 @@ abandons the search and restores the family in force.
 
 Families are collected from `fc-list` when fontconfig is present, plus a
 direct scan of the OS font directories that reads only each font's `name` and
-`post` tables.
+`post` tables. The bundled family is listed alongside them, tagged `bundled`.
+
+## Bundled font
+
+Pages are set in [Iosevka Brick](https://github.com/riadafridishibly/Iosevka-Brick),
+served by mdrfc itself, so a machine with no monospace font of its own reads
+the same as one with a dozen. Four faces ship as WOFF2 — regular, oblique,
+bold, bold oblique — served from `/_font/<version>/` and cached indefinitely;
+upgrading mdrfc changes the URL, so a rebuilt face reaches readers at once.
+
+They are subset to the ranges a markdown document actually reaches for (Latin,
+Greek, Cyrillic, punctuation, currency, arrows, maths, box drawing, geometric
+symbols), which is 776 KB rather than the 2.1 MB the full faces weigh.
+Anything outside those ranges falls through to the system monospace stack, as
+does the whole page until the font lands — the faces are declared
+`font-display: swap`, so nothing waits on them. Picking another family in the
+settings panel overrides it.
+
+A font you had already chosen is **not** replaced by it — see
+[Announcements](#announcements).
+
+To rebuild the faces from a fresh Iosevka-Brick checkout:
+
+```sh
+for w in Regular Oblique Bold BoldOblique; do
+  uvx --from "fonttools[woff]" --with brotli pyftsubset \
+    dist/IosevkaBrick/WOFF2/IosevkaBrick-$w.woff2 \
+    --output-file=src/webfonts/IosevkaBrick-$w.woff2 \
+    --flavor=woff2 --layout-features='*' \
+    --unicodes="$(cat src/webfonts/RANGES)"
+done
+```
+
+## Announcements
+
+A setting you have saved is yours: a new default never overwrites it. So when
+mdrfc starts doing something your saved setting hides, the page offers it once
+instead of taking it — a small card in the corner with one button to accept and
+one to decline. Either answer is recorded in `localStorage`, and that notice is
+finished; closing it counts as declining.
+
+The bundled font is the first of them: pick a font in the settings panel and it
+stays picked, with the notice offering Iosevka Brick once. Accepting clears the
+saved font, which lands you back on the stylesheet's stack — exactly what
+emptying the font field does.
+
+Adding one is an entry in [`src/announce.ts`](src/announce.ts):
+
+```ts
+{
+  id: "bundled-font-1",     // change the id to announce something again
+  title: "mdrfc now ships a font",
+  body: "…",
+  accept: "Try it",
+  dismiss: "Keep mine",
+  when: "font-overridden",  // who it is worth showing to
+  action: "use-bundled-font" // what accepting does
+}
+```
+
+`when` and `action` name functions in the page's own registries (`ANN_WHEN` and
+`ANN_DO` in the settings script) rather than carrying code, so nothing served
+is ever evaluated as script. `when: "always"` covers a notice everyone should
+see.
 
 ## Live reload
 
-With `--web` and a filesystem path (anything but stdin), mdrfc watches the
+With the web view and a filesystem path (anything but stdin), mdrfc watches the
 directory being served — not the individual file, so an editor that saves by
 renaming a temp file over the original doesn't break the watch after one save.
 Directory mode watches recursively, so files added or deleted while the server
@@ -307,6 +378,8 @@ src/
   frontmatter.ts   YAML/TOML frontmatter split + subset parser
   search.ts        fzf path ranking + heading/content scan, mtime-cached
   fonts.ts         installed font families via fc-list + sfnt table scan
+  webfont.ts       the bundled family: @font-face rules + face lookup
+  announce.ts      one-time notices about new defaults, accepted or dismissed
   open.ts          cross-platform browser open
   server.ts        node:http server + SSE live-reload + dir watcher + md tree
   types/           declarations for the one dependency that ships none
@@ -316,6 +389,7 @@ src/
   render/
     term.ts        marked + marked-terminal renderer; dir-mode tree
     web.ts         marked HTML + CSS template + sidebar filetree
+  webfonts/        the four subset Iosevka Brick WOFF2 faces
 test/
   harness.ts       the slice of `expect` these tests use, over node:test
 ```

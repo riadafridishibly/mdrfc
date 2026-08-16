@@ -1,5 +1,13 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import net from "node:net";
+
+/** Read from package.json so `npm version` is the only place it is bumped. */
+export const VERSION = (
+  JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+    version: string;
+  }
+).version;
 
 export type Theme = "auto" | "light" | "dark";
 
@@ -22,7 +30,7 @@ export interface RenderOpts {
 export const RFC_WIDTH = 72;
 
 export const TOC_MODES: TocMode[] = ["off", "top", "left", "right"];
-export const DEFAULT_TOC: TocMode = "left";
+export const DEFAULT_TOC: TocMode = "right";
 
 /** A table-of-contents placement, or the default when the name is not one. */
 export function parseTocMode(v: unknown): TocMode {
@@ -141,6 +149,18 @@ export async function readStdin(): Promise<string> {
   let text = "";
   for await (const chunk of process.stdin) text += chunk;
   return text;
+}
+
+/**
+ * Whether a browser opened here would land in front of the person typing.
+ * A terminal is someone watching, but over SSH into a machine with no display
+ * it is someone watching from somewhere else: the opener fails, and the
+ * `localhost` URL it printed names a host they are not sitting at. Those
+ * sessions read in the terminal unless `--web` asks otherwise.
+ */
+export function hasBrowser(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!env.SSH_CONNECTION && !env.SSH_TTY && !env.SSH_CLIENT) return true;
+  return !!(env.DISPLAY || env.WAYLAND_DISPLAY);
 }
 
 /** Probe whether a TCP port is free. */

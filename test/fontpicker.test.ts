@@ -69,9 +69,9 @@ async function enter() {
   await Promise.resolve();
 }
 
-beforeEach(async () => {
-  GlobalRegistrator.register();
-  globalThis.fetch = (async () => new Response(JSON.stringify(FONTS))) as typeof fetch;
+/** Put the panel on a fresh page, with `/_fonts` answering `fonts`. */
+async function mount(fonts: { name: string; mono: boolean; bundled?: boolean }[]) {
+  globalThis.fetch = (async () => new Response(JSON.stringify(fonts))) as typeof fetch;
   document.body.innerHTML = pageStyle() + panelMarkup();
   new Function(panelScript())();
 
@@ -80,6 +80,11 @@ beforeEach(async () => {
 
   input = document.getElementById("mdrfc-font") as HTMLInputElement;
   list = document.getElementById("mdrfc-font-list") as HTMLElement;
+}
+
+beforeEach(async () => {
+  GlobalRegistrator.register();
+  await mount(FONTS);
 });
 
 afterEach(async () => {
@@ -125,9 +130,9 @@ describe("font picker", () => {
   });
 
   test("names the family an empty field falls back to", () => {
-    // Stack is ui-monospace, SFMono-Regular, "SF Mono", … — the generic is
-    // skipped and SFMono-Regular is a PostScript name no family list reports,
-    // so the first entry actually installed is SF Mono.
+    // The bundled family heads the stack but is absent from this fixture, and
+    // the generics after it are skipped — SFMono-Regular is a PostScript name
+    // no family list reports, so the first entry actually installed is SF Mono.
     expect(input.value).toBe("");
     expect(input.placeholder).toBe("SF Mono (system default)");
   });
@@ -198,5 +203,35 @@ describe("font picker", () => {
     key("Escape");
     expect(list.childElementCount).toBe(0);
     expect(document.getElementById("mdrfc-panel")!.classList.contains("open")).toBe(true);
+  });
+});
+
+describe("the bundled family in the picker", () => {
+  const WITH_BUNDLED = [{ name: "Iosevka Brick", mono: true, bundled: true }, ...FONTS];
+
+  test("is what an empty field falls back to, and says so", async () => {
+    await mount(WITH_BUNDLED);
+    expect(input.placeholder).toBe("Iosevka Brick (bundled default)");
+  });
+
+  test("is tagged apart from the installed monospace families", async () => {
+    await mount(WITH_BUNDLED);
+    await type("iosevka");
+    const li = list.querySelector("li[role=option]")!;
+    expect(li.querySelector(".sample")!.textContent).toBe("Iosevka Brick");
+    expect(li.querySelector(".tag")!.textContent).toBe("bundled");
+  });
+
+  test("can be picked back after another family, like any row", async () => {
+    await mount(WITH_BUNDLED);
+    await type("Monaco");
+    await enter();
+    await type("iosevka");
+    (list.querySelector("li[role=option]") as HTMLElement).dispatchEvent(
+      new Event("click", { bubbles: true }),
+    );
+    expect(localStorage.getItem("mdrfc.font")).toBe("Iosevka Brick");
+    // A family with a space in it keeps its quotes where Monaco does not.
+    expect(/^"Iosevka Brick",/.test(document.body.style.fontFamily)).toBe(true);
   });
 });
