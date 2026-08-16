@@ -13,7 +13,7 @@ import { openBrowser } from "./open.ts";
 import { listSystemFonts } from "./fonts.ts";
 import { isExtendedQuery, search } from "./search.ts";
 import { FAVICON_PATH, FAVICON_SVG } from "./favicon.ts";
-import { readWebfont, WEBFONT_PATH } from "./webfont.ts";
+import { readWebfont, WEBFONT_PATH, WEBFONT_ROOT } from "./webfont.ts";
 import type { RenderOpts } from "./util.ts";
 
 // The browser-side runtime, read off disk at startup instead of imported: these
@@ -305,14 +305,18 @@ export async function startServer(opts: ServerOpts): Promise<void> {
       return;
     }
 
-    // The bundled typeface. Cached for a day, unlike everything else here: the
-    // faces are three quarters of a megabyte and only change when mdrfc itself
-    // is upgraded, so re-fetching them on every in-place navigation buys
-    // nothing. The names are checked against the shipped list, not the disk.
-    if (u.pathname.startsWith(WEBFONT_PATH)) {
-      const font = readWebfont(u.pathname.slice(WEBFONT_PATH.length));
+    // The bundled typeface. Cached indefinitely, unlike everything else here:
+    // the faces are three quarters of a megabyte and only change when mdrfc
+    // itself is upgraded, which changes the URL they are served on. The names
+    // are checked against the shipped list, not the disk.
+    if (u.pathname.startsWith(WEBFONT_ROOT)) {
+      const font = u.pathname.startsWith(WEBFONT_PATH)
+        ? readWebfont(u.pathname.slice(WEBFONT_PATH.length))
+        : null; // a face from a version that is no longer the one running
       if (font) {
-        sendBytes(res, 200, "font/woff2", font, { "cache-control": "max-age=86400" });
+        sendBytes(res, 200, "font/woff2", font, {
+          "cache-control": "max-age=31536000, immutable",
+        });
       } else {
         send(res, 404, "text/plain; charset=utf-8", "no such font");
       }

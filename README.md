@@ -17,7 +17,7 @@ Markdown is for *reading*, not just rendering to HTML. mdrfc gives you two fast 
 - **Web** (the default) — a 72ch column set in the monospace face mdrfc ships with, and proper HTML: real links, tables, syntax-highlighted code blocks, dark/light theme. With **live reload** so editing the file refreshes the browser instantly.
 - **Terminal** (`--term`) — RFC-text feel, monospace, 72-col reflow, optional color, paged through `less`.
 
-Piping picks the terminal for you: with stdout on a pipe or a file, `mdrfc x.md | grep foo` and `mdrfc x.md > out.txt` render text rather than opening a tab. Pass `--web` to serve anyway.
+Piping picks the terminal for you: with stdout on a pipe or a file, `mdrfc x.md | grep foo` and `mdrfc x.md > out.txt` render text rather than opening a tab. So does an SSH session with no display, where the browser would open on the wrong machine. Pass `--web` to serve anyway.
 
 ## Install
 
@@ -293,7 +293,8 @@ direct scan of the OS font directories that reads only each font's `name` and
 Pages are set in [Iosevka Brick](https://github.com/riadafridishibly/Iosevka-Brick),
 served by mdrfc itself, so a machine with no monospace font of its own reads
 the same as one with a dozen. Four faces ship as WOFF2 — regular, oblique,
-bold, bold oblique — served from `/_font/` and cached for a day.
+bold, bold oblique — served from `/_font/<version>/` and cached indefinitely;
+upgrading mdrfc changes the URL, so a rebuilt face reaches readers at once.
 
 They are subset to the ranges a markdown document actually reaches for (Latin,
 Greek, Cyrillic, punctuation, currency, arrows, maths, box drawing, geometric

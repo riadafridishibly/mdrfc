@@ -6,24 +6,21 @@ import { renderTerminal, renderTerminalDirectory } from "./render/term.ts";
 import { startServer } from "./server.ts";
 import {
   DEFAULT_TOC,
+  hasBrowser,
   pageOutput,
   parseTocMode,
   readStdin,
   RFC_WIDTH,
   type Theme,
+  VERSION,
 } from "./util.ts";
 
-/** Read from package.json so `npm version` is the only place it is bumped. */
-const VERSION = `mdrfc ${
-  (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
-    version: string;
-  }).version
-}`;
+const BANNER = `mdrfc ${VERSION}`;
 const DEFAULT_PORT = 2119;
 
 function printHelp(): void {
   console.log(`
-${VERSION}
+${BANNER}
 Simple markdown viewer — terminal + web. RFC-style monospace.
 
 USAGE
@@ -51,6 +48,8 @@ WHERE IT OPENS
   The browser is the default view. --term (-t) renders to the terminal
   instead, and so does a stdout that is not a terminal, so \`mdrfc x.md | less\`
   and \`mdrfc x.md > out.txt\` keep working; --web forces the server even then.
+  An SSH session with no display also reads in the terminal, since a browser
+  opened there would not be in front of you.
 
 FONT (web view)
   Pages are set in Iosevka Brick, served by mdrfc itself, so a machine with no
@@ -136,7 +135,7 @@ async function main() {
     process.exit(0);
   }
   if (values.version) {
-    console.log(VERSION);
+    console.log(BANNER);
     process.exit(0);
   }
 
@@ -190,12 +189,15 @@ async function main() {
     toc: parseTocMode(values.toc),
   };
 
-  // The browser is where a document is read, so that is where it opens. Two
-  // things send it to the terminal instead: asking for it, and a stdout that is
-  // not a terminal — `mdrfc x.md | grep` wants text on the pipe, not a browser
-  // tab and an empty pipe. An explicit --web wins over that.
+  // The browser is where a document is read, so that is where it opens. Three
+  // things send it to the terminal instead: asking for it, a stdout that is not
+  // a terminal — `mdrfc x.md | grep` wants text on the pipe, not a browser tab
+  // and an empty pipe — and a session with no browser to open. An explicit
+  // --web wins over all of them.
   const useWeb =
-    !flag("term") && !flag("no-web") && (flag("web") || process.stdout.isTTY === true);
+    !flag("term") &&
+    !flag("no-web") &&
+    (flag("web") || (process.stdout.isTTY === true && hasBrowser()));
 
   if (useWeb) {
     const port = parseInt(values.port as string, 10) || DEFAULT_PORT;

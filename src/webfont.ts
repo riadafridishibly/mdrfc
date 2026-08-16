@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { VERSION } from "./util.ts";
 
 /**
  * The typeface the web view ships with, so a page reads the same on a machine
@@ -19,8 +20,17 @@ import { readFileSync } from "node:fs";
 
 export const WEBFONT_FAMILY = "Iosevka Brick";
 
-/** URL prefix the server answers font requests on. */
-export const WEBFONT_PATH = "/_font/";
+/** Everything the font route answers, current version or not. */
+export const WEBFONT_ROOT = "/_font/";
+
+/**
+ * URL prefix the faces are actually served on. Versioned, so they can be
+ * cached forever and an upgrade still lands: a rebuilt face reaches readers
+ * under a new URL instead of waiting behind whatever the old one was cached
+ * for. Requests for a version that is no longer running are not found, which
+ * nothing asks for — the document naming them is never cached.
+ */
+export const WEBFONT_PATH = `${WEBFONT_ROOT}${VERSION}/`;
 
 interface Face {
   file: string;

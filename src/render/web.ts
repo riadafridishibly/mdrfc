@@ -883,7 +883,24 @@ function htmlTemplate(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="${FAVICON_PATH}">
-<link rel="preload" as="font" type="font/woff2" href="${WEBFONT_PRELOAD}" crossorigin>
+<script>
+(function(){
+  // Preloading the regular face only pays on a page that paints in it. A
+  // reader with a font of their own renders none of it, so they are not made
+  // to fetch 180 KB they will not use — which the browser would warn about
+  // besides. Storage is read here rather than waited for: the face has to be
+  // asked for before the first paint or the preload is pointless.
+  try {
+    var saved = localStorage.getItem("mdrfc.font");
+    if(saved && saved !== ${JSON.stringify(WEBFONT_FAMILY)}) return;
+  } catch(e){}
+  var l = document.createElement("link");
+  l.rel = "preload"; l.as = "font"; l.type = "font/woff2";
+  l.href = ${JSON.stringify(WEBFONT_PRELOAD)};
+  l.crossOrigin = "anonymous";
+  document.head.appendChild(l);
+})();
+</script>
 <title>${docTitle ? esc(docTitle) : "mdrfc"}</title>
 <style>
 ${WEBFONT_CSS}
@@ -1277,6 +1294,10 @@ ${WEBFONT_CSS}
   html[data-toc="right"] #mdrfc-notice { right: auto; left: 16px; }
   html[data-toc="right"] body.mdrfc-has-sidebar #mdrfc-notice {
     left: calc(var(--sidebar-w) + 16px);
+  }
+  /* A collapsed filetree is off-screen, so there is nothing to clear. */
+  html[data-toc="right"].mdrfc-sidebar-collapsed body.mdrfc-has-sidebar #mdrfc-notice {
+    left: 16px;
   }
   @keyframes mdrfc-notice-in {
     from { opacity: 0; transform: translateY(8px); }
@@ -1743,7 +1764,14 @@ ${reloadScript}
   var ANN = ${embed(ANNOUNCEMENTS)};
   var ANN_WHEN = {
     "always": function(){ return true; },
-    "font-overridden": function(){ return !!rd("font", ""); }
+    // Their own font, and not the bundled one under another route: picking
+    // "${WEBFONT_FAMILY}" from the list saves it like any other family, and
+    // offering someone the font they are already reading in — then dropping
+    // their choice to give it to them — is worse than saying nothing.
+    "font-overridden": function(){
+      var f = rd("font", "");
+      return !!f && f !== ${JSON.stringify(WEBFONT_FAMILY)};
+    }
   };
   var ANN_DO = {
     // Dropping the choice lands on the stylesheet's stack, which the bundled
@@ -1803,6 +1831,7 @@ ${reloadScript}
     }
     notice.hidden = true;
     notice.textContent = "";
+    announce();  // whatever was queued behind it, if anything ever is
   }
 
   announce();

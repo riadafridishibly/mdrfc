@@ -77,6 +77,14 @@ describe("announcements", () => {
     expect(notice.textContent).toBe("");
   });
 
+  test("nothing is announced to a reader who already picked the bundled family", async () => {
+    // Saved like any other family, but it is the font the notice would offer.
+    localStorage.setItem("mdrfc.font", WEBFONT_FAMILY);
+    await load();
+    expect(notice.hidden).toBe(true);
+    expect(localStorage.getItem("mdrfc.font")).toBe(WEBFONT_FAMILY);
+  });
+
   test("a reader with a font of their own is offered the new one", async () => {
     localStorage.setItem("mdrfc.font", "Menlo");
     await load();
