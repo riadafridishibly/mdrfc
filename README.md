@@ -313,8 +313,28 @@ written wrong, you read exactly what the markdown said — and a diagram that
 will not parse says why underneath it. The block's toolbar swaps `wrap` for
 `source`, which shows the source again, and `copy` copies it either way.
 
+A diagram in the flow is bounded by the column it sits in, which for a big one
+means legible at a glance and no more. Click it — or press `open` in its
+toolbar, or Enter with it focused — and it fills the window instead:
+
+| | |
+|---|---|
+| drag | pan |
+| wheel / trackpad pinch | zoom about the pointer |
+| double-click | zoom in there |
+| `+` `-` `0` | zoom in, out, refit |
+| arrow keys | pan |
+| Esc, `close`, click past the diagram | close |
+
+The readout calls the size it opened at 100%, so a diagram fits the window
+until you say otherwise. Panning and zooming are one transform on a wrapper
+rather than a change to the SVG, so the drawing stays as sharp as the zoom
+asks for.
+
 Diagrams follow the page theme. Colours live inside the SVG rather than in
-CSS, so switching theme redraws them; the diagram font is the page's own.
+CSS, so switching theme redraws them — including one the window is showing,
+which keeps its pan and zoom across the swap; the diagram font is the page's
+own.
 Labels are sanitized and `click` directives cannot reach `javascript:`
 (mermaid's `strict` security level), because the markdown being viewed is not
 necessarily yours.

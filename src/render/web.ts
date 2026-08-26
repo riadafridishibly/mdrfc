@@ -299,6 +299,7 @@ function mermaidBlock(source: string): string {
   return (
     `<div class="mdrfc-code mdrfc-mermaid">` +
     `<div class="mdrfc-code-tools" data-mdrfc-chrome>` +
+    codeBtn("open", "Open the diagram full screen") +
     codeBtn("source", "Show the diagram source", ' aria-pressed="false"') +
     codeBtn("copy", "Copy diagram source") +
     `</div>` +
@@ -1134,6 +1135,40 @@ ${WEBFONT_CSS}
   .mdrfc-mermaid.rendered.show-source > pre { display: block; }
   .mdrfc-mermaid.rendered.show-source .mdrfc-mermaid-out { display: none; }
   .mdrfc-mermaid-out svg { max-width: 100%; height: auto; }
+  /* The column bounds a diagram in the flow, so a big one opens instead. */
+  .mdrfc-mermaid.rendered .mdrfc-mermaid-out { cursor: zoom-in; }
+  .mdrfc-mermaid.rendered .mdrfc-mermaid-out:focus-visible {
+    outline: 2px solid var(--link); outline-offset: 3px;
+  }
+  .mdrfc-mermaid:not(.rendered) .mdrfc-code-btn[data-act="open"] { display: none; }
+
+  /* ── the diagram lightbox ────────────────────────────────── */
+  #mdrfc-zoom { position: fixed; inset: 0; z-index: 200; display: none; }
+  #mdrfc-zoom.open { display: block; }
+  #mdrfc-zoom .mdrfc-zoom-stage {
+    position: absolute; inset: 0; overflow: hidden; background: var(--bg);
+    /* The gestures are the overlay's own; the browser must not also act. */
+    touch-action: none; cursor: grab;
+  }
+  #mdrfc-zoom .mdrfc-zoom-stage:active { cursor: grabbing; }
+  #mdrfc-zoom .mdrfc-zoom-canvas { transform-origin: 0 0; will-change: transform; }
+  #mdrfc-zoom .mdrfc-zoom-canvas svg { display: block; width: 100%; height: 100%; }
+  #mdrfc-zoom .mdrfc-zoom-tools {
+    position: absolute; top: 12px; right: 12px; z-index: 1;
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); font-size: .8em;
+  }
+  #mdrfc-zoom .mdrfc-zoom-tools button {
+    font: inherit; font-family: inherit; min-width: 2.2em; padding: 1px 6px;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: var(--code-bg); color: var(--muted); cursor: pointer;
+  }
+  #mdrfc-zoom .mdrfc-zoom-tools button:hover { color: var(--fg); }
+  #mdrfc-zoom .mdrfc-zoom-at {
+    min-width: 4em; text-align: center; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
   .mdrfc-mermaid-err {
     margin: 0 0 1em; font-size: .85em; color: var(--muted);
     border-left: 2px solid var(--border); padding-left: .6em;
@@ -1969,6 +2004,10 @@ ${reloadScript}
     if(btn.dataset.act === "wrap"){
       var on = box.classList.toggle("wrap");
       btn.setAttribute("aria-pressed", on ? "true" : "false");
+      return;
+    }
+    if(btn.dataset.act === "open"){
+      if(window.mdrfcMermaid) window.mdrfcMermaid.zoom(box);
       return;
     }
     if(btn.dataset.act === "source"){
