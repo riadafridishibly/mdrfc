@@ -1147,8 +1147,10 @@ ${WEBFONT_CSS}
   #mdrfc-zoom.open { display: block; }
   #mdrfc-zoom .mdrfc-zoom-stage {
     position: absolute; inset: 0; overflow: hidden; background: var(--bg);
-    /* The gestures are the overlay's own; the browser must not also act. */
+    /* The gestures are the overlay's own; the browser must not also act:
+       no scroll or pinch, and no text selected out of the drawing by a pan. */
     touch-action: none; cursor: grab;
+    -webkit-user-select: none; user-select: none;
   }
   #mdrfc-zoom .mdrfc-zoom-stage:active { cursor: grabbing; }
   #mdrfc-zoom .mdrfc-zoom-canvas { transform-origin: 0 0; will-change: transform; }
