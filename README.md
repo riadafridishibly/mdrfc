@@ -14,7 +14,7 @@ cat foo.md | mdrfc           # stdin works too
 
 Markdown is for *reading*, not just rendering to HTML. mdrfc gives you two fast paths from the same source:
 
-- **Web** (the default) — a 72ch column set in the monospace face mdrfc ships with, and proper HTML: real links, tables, syntax-highlighted code blocks, dark/light theme. With **live reload** so editing the file refreshes the browser instantly.
+- **Web** (the default) — a 72ch column set in the monospace face mdrfc ships with, and proper HTML: real links, tables, syntax-highlighted code blocks, dark/light theme, mermaid diagrams. With **live reload** so editing the file refreshes the browser instantly.
 - **Terminal** (`--term`) — RFC-text feel, monospace, 72-col reflow, optional color, paged through `less`.
 
 Piping picks the terminal for you: with stdout on a pipe or a file, `mdrfc x.md | grep foo` and `mdrfc x.md > out.txt` render text rather than opening a tab. So does an SSH session with no display, where the browser would open on the wrong machine. Pass `--web` to serve anyway.
@@ -293,6 +293,43 @@ Families are collected from `fc-list` when fontconfig is present, plus a
 direct scan of the OS font directories that reads only each font's `name` and
 `post` tables. The bundled family is listed alongside them, tagged `bundled`.
 
+## Mermaid diagrams
+
+A ```` ```mermaid ```` fence is drawn as a diagram in the web view:
+
+````
+```mermaid
+graph TD
+  A[Start] --> B{Choice}
+  B -->|yes| C[Do it]
+  B -->|no| D[Skip]
+```
+````
+
+Every fence is served as its source, inside a container holding an empty slot
+for the drawing, and the drawing replaces the source once it exists. That is
+the whole fallback: with JavaScript off, the bundle missing, or a diagram
+written wrong, you read exactly what the markdown said — and a diagram that
+will not parse says why underneath it. The block's toolbar swaps `wrap` for
+`source`, which shows the source again, and `copy` copies it either way.
+
+Diagrams follow the page theme. Colours live inside the SVG rather than in
+CSS, so switching theme redraws them; the diagram font is the page's own.
+Labels are sanitized and `click` directives cannot reach `javascript:`
+(mermaid's `strict` security level), because the markdown being viewed is not
+necessarily yours.
+
+Mermaid ships with mdrfc, like the font does, so diagrams draw with no
+network. It is a **dev** dependency, not a runtime one — 84 MB unpacked in
+`node_modules` against the one 3.5 MB browser build a reader needs, which
+`npm run build` copies into the published package. The bundle is served from
+`/_mermaid/<version>/` and cached indefinitely, and it is only fetched by a
+page that actually has a diagram on it, so a document without one costs
+nothing. In directory mode the small loader is always present, since
+navigating in place can bring a diagram to a page that started without any.
+
+The terminal view (`--term`) leaves a mermaid fence as the code block it is.
+
 ## Bundled font
 
 Pages are set in [Iosevka Brick](https://github.com/riadafridishibly/Iosevka-Brick),
@@ -404,6 +441,10 @@ Five runtime deps, none with transitive dependencies of their own:
 - [`preact`](https://preactjs.com) + [`htm`](https://github.com/developit/htm) — the command palette
 
 Everything else (HTTP server, live reload, file watch, arg parsing, browser launch) uses Node built-ins.
+
+[`mermaid`](https://mermaid.js.org) is a dev dependency: only its browser
+build ships, and only a page with a diagram on it fetches it — see
+[Mermaid diagrams](#mermaid-diagrams).
 
 `preact` and `htm` ship to the browser as a single 13 KB bundle, served from
 `/_preact.js` rather than inlined so it stays cached across navigation. There is
