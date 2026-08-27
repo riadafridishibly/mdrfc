@@ -44,6 +44,16 @@ A later line raises the socket backlog.</p>
 </main>
 `;
 
+/** A drawn diagram: the source is out of the reader's sight, the drawing is not. */
+const MERMAID_DOC = `
+<main>
+<h2 id="socket-tuning">Socket tuning</h2>
+<div class="mdrfc-code mdrfc-mermaid rendered"><div class="mdrfc-code-tools" data-mdrfc-chrome><button data-act="source">source</button></div><pre data-mdrfc-mermaid data-mdrfc-chrome><code>graph TD
+A[socket backlog]
+</code></pre><div class="mdrfc-mermaid-out" data-mdrfc-chrome><svg></svg></div></div>
+</main>
+`;
+
 /** The same document with the contents list and a code block's toolbar. */
 const CHROME_DOC = `
 <main>
@@ -181,6 +191,38 @@ describe("search highlighting", () => {
     test("does not double a heading's own hits", () => {
       mod.highlightMatches("tuning", { anchor: "socket-tuning" });
       expect(texts("mdrfc-hit-current")).toEqual(["tuning"]);
+    });
+  });
+
+  // A drawn diagram hides the fence the palette still lists, so the highlighter
+  // asks for it back rather than band nothing.
+  describe("a hit inside a diagram's hidden source", () => {
+    beforeEach(() => {
+      document.body.innerHTML = MERMAID_DOC;
+      (window as any).mdrfcMermaid = {
+        revealSource(terms: string[]) {
+          const pre = document.querySelector(".mdrfc-mermaid pre")!;
+          if (!terms.every((t) => pre.textContent!.toLowerCase().includes(t))) return false;
+          pre.removeAttribute("data-mdrfc-chrome");
+          return true;
+        },
+      };
+    });
+    afterEach(() => {
+      delete (window as any).mdrfcMermaid;
+    });
+
+    test("is shown again, and then banded", () => {
+      const ok = mod.highlightMatches("backlog", { snippet: "A[socket backlog]" });
+      expect(ok).toBe(true);
+      expect(only("mdrfc-hit-line")).toBe("A[socket backlog]");
+    });
+
+    test("a query the diagram does not hold leaves the drawing up", () => {
+      expect(mod.highlightMatches("nowhere", {})).toBe(false);
+      expect(
+        document.querySelector(".mdrfc-mermaid pre")!.hasAttribute("data-mdrfc-chrome")
+      ).toBe(true);
     });
   });
 

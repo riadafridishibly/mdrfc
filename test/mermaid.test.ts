@@ -78,6 +78,10 @@ describe("what the page asks the browser to fetch", () => {
     expect(plain).toContain(MERMAID_INIT_URL);
   });
 
+  test("the settings panel tells the page a font changed", () => {
+    expect(PAGE).toContain('new CustomEvent("mdrfc:font")');
+  });
+
   test("the bundle is named under the running version, so an upgrade lands", () => {
     expect(MERMAID_URL).toBe(`/_mermaid/${VERSION}/${MERMAID_FILE}`);
     expect(PAGE).toContain(`mermaidUrl: "${MERMAID_URL}"`);
@@ -96,6 +100,7 @@ describe("the bundled browser build", () => {
 // ── the client module, against a stand-in for mermaid ─────────────────────
 interface Config {
   theme?: string;
+  fontFamily?: string;
   securityLevel?: string;
   suppressErrorRendering?: boolean;
   startOnLoad?: boolean;
@@ -125,7 +130,9 @@ function page(source: string): string {
 
 type Client = {
   render(): Promise<void>;
+  redraw(): Promise<void>;
   syncSource(el: Element): void;
+  revealSource(terms: string[]): boolean;
   zoom(el: Element | null): void;
   close(): void;
   refresh(): void;
@@ -314,5 +321,82 @@ describe("opening a diagram full screen", () => {
     const copy = document.querySelector(".mdrfc-zoom-canvas svg")!;
     expect(copy.getAttribute("id")).not.toBe(first);
     expect(document.getElementById("mdrfc-zoom")!.classList.contains("open")).toBe(true);
+  });
+
+  /** A press, as the stage sees one, on `el`. */
+  function press(el: Element): void {
+    el.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+  }
+
+  // Nothing inside the overlay holds focus once the stage has been pressed, so
+  // keys watched from the overlay alone would go dead after the first pan.
+  test("the keys still answer after a press has taken focus off the button", async () => {
+    const client = await mount(page("graph TD\n  A-->B"), withIds);
+    client.zoom(document.querySelector(".mdrfc-mermaid"));
+    const overlay = document.getElementById("mdrfc-zoom")!;
+    press(document.querySelector(".mdrfc-zoom-stage")!);
+    (document.body as HTMLElement).focus();
+
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(overlay.classList.contains("open")).toBe(false);
+  });
+
+  // Pointer capture retargets the click to the stage, so an identity check on
+  // the target would read a click on a node as a click past the diagram.
+  test("clicking the drawing itself does not close it", async () => {
+    const client = await mount(page("graph TD\n  A-->B"), withIds);
+    client.zoom(document.querySelector(".mdrfc-mermaid"));
+    const stage = document.querySelector(".mdrfc-zoom-stage")!;
+
+    press(document.querySelector(".mdrfc-zoom-canvas svg")!);
+    stage.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(document.getElementById("mdrfc-zoom")!.classList.contains("open")).toBe(true);
+
+    press(stage);
+    stage.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(document.getElementById("mdrfc-zoom")!.classList.contains("open")).toBe(false);
+  });
+});
+
+describe("a diagram redrawn for something other than the palette", () => {
+  afterEach(async () => {
+    await GlobalRegistrator.unregister();
+  });
+
+  // The face is read at render time and written into the SVG, so the palette
+  // stamp cannot tell that a font change left the drawing stale.
+  test("a font change draws it again, in the face the body now wears", async () => {
+    const client = await mount(page("graph TD\n  A-->B"));
+    expect(config.fontFamily).not.toBe("Iosevka");
+    document.body.style.fontFamily = "Iosevka";
+
+    await client.redraw();
+    expect(config.fontFamily).toBe("Iosevka");
+    expect(bound).toHaveLength(2);
+  });
+});
+
+describe("a search hit inside a diagram's source", () => {
+  afterEach(async () => {
+    await GlobalRegistrator.unregister();
+  });
+
+  test("shows the source again, so the highlighter has something to paint", async () => {
+    const client = await mount(page("graph TD\n  A-->B"));
+    const el = document.querySelector(".mdrfc-mermaid")!;
+    expect(el.querySelector("pre")!.hasAttribute("data-mdrfc-chrome")).toBe(true);
+
+    expect(client.revealSource(["graph"])).toBe(true);
+    expect(el.classList.contains("show-source")).toBe(true);
+    expect(el.querySelector("pre")!.hasAttribute("data-mdrfc-chrome")).toBe(false);
+    // The toolbar must say what the block is now showing.
+    expect(el.querySelector('[data-act="source"]')!.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  test("a term the diagram does not hold leaves it drawn", async () => {
+    const client = await mount(page("graph TD\n  A-->B"));
+    expect(client.revealSource(["graph", "nowhere"])).toBe(false);
+    expect(client.revealSource([])).toBe(false);
+    expect(document.querySelector(".mdrfc-mermaid")!.classList.contains("show-source")).toBe(false);
   });
 });

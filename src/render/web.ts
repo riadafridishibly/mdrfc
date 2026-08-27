@@ -1658,6 +1658,9 @@ ${reloadScript}
   function applyFont(f){
     var fam = f ? '"'+f.replace(/"/g,"")+'", "${WEBFONT_FAMILY}", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : "";
     document.body.style.fontFamily = fam;
+    // Diagrams carry the face they were drawn in inside the SVG, so a new one
+    // reaches them only by drawing them again.
+    window.dispatchEvent(new CustomEvent("mdrfc:font"));
   }
   function applySize(s){
     if(!s){ root.style.removeProperty("--font-size"); sizeVal.textContent = ""; }

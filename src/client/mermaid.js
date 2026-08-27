@@ -39,6 +39,11 @@ function load() {
     script.onerror = () => reject(new Error("mermaid bundle unreachable"));
     document.head.appendChild(script);
   });
+  // One unreachable fetch must not pin every diagram in the tab to "could not
+  // be loaded" until a reload: forget the failure so the next sight retries.
+  bundle.catch(() => {
+    bundle = null;
+  });
   return bundle;
 }
 
@@ -150,7 +155,36 @@ export function syncSource(box) {
   }
 }
 
-window.mdrfcMermaid = { render, syncSource, zoom: open, close, refresh };
+/** Draw every diagram again, whatever palette it already carries. */
+export function redraw() {
+  for (const box of document.querySelectorAll(BOX)) delete box.dataset.mermaidTheme;
+  return render().then(refresh);
+}
+
+/**
+ * Show the source of every diagram whose fence holds all of `terms`, so a
+ * search hit inside one has something visible to land on — the drawing took
+ * the place of the text the palette is still listing. True if any was shown.
+ */
+export function revealSource(terms) {
+  if (!terms || !terms.length) return false;
+  let shownAny = false;
+  for (const box of document.querySelectorAll(BOX)) {
+    if (!box.classList.contains("rendered") || box.classList.contains("show-source")) continue;
+    const source = box.querySelector("pre");
+    if (!source) continue;
+    const text = source.textContent.toLowerCase();
+    if (!terms.every((t) => text.includes(t))) continue;
+    box.classList.add("show-source");
+    const btn = box.querySelector('.mdrfc-code-btn[data-act="source"]');
+    if (btn) btn.setAttribute("aria-pressed", "true");
+    syncSource(box);
+    shownAny = true;
+  }
+  return shownAny;
+}
+
+window.mdrfcMermaid = { render, redraw, syncSource, revealSource, zoom: open, close, refresh };
 
 render();
 // A palette swap needs the diagrams drawn again; so does a document arriving
@@ -163,6 +197,9 @@ window.addEventListener("mdrfc:navigated", () => {
   close();
   render();
 });
+// The face is baked into the drawing at render time, so a new one is a redraw
+// too — and one the palette stamp cannot detect, hence dropping it by hand.
+window.addEventListener("mdrfc:font", redraw);
 
 // Opening from the drawing itself. Delegated, so it holds for diagrams that
 // arrive with a document navigated to in place.
@@ -180,7 +217,7 @@ document.addEventListener("keydown", (event) => {
 if (window.matchMedia) {
   const dark = window.matchMedia("(prefers-color-scheme: dark)");
   const onChange = () => {
-    if (!document.documentElement.hasAttribute("data-theme")) render();
+    if (!document.documentElement.hasAttribute("data-theme")) render().then(refresh);
   };
   if (dark.addEventListener) dark.addEventListener("change", onChange);
   else if (dark.addListener) dark.addListener(onChange);
@@ -215,6 +252,7 @@ let view = { x: 0, y: 0, scale: 1, fit: 1 };
 let pointers = new Map();
 let pinch = null; // { gap, x, y } at the last move
 let dragged = false;
+let onDrawing = false; // whether the press that began this click was on the SVG
 let copies = 0;
 
 function build() {
@@ -245,10 +283,12 @@ function build() {
     else if (act === "out") zoomAt(1 / 1.3, mid());
   });
 
-  // Clicking past the drawing closes, the way a lightbox is expected to —
-  // but not when the click is the end of a drag that happened to land there.
-  stage.addEventListener("click", (event) => {
-    if (event.target === stage && !dragged) close();
+  // Clicking past the drawing closes, the way a lightbox is expected to — but
+  // not when the click is the end of a drag that happened to land there, and
+  // not when it began on the drawing: capturing the pointer retargets the
+  // click to the stage, so the press is the only record of what was under it.
+  stage.addEventListener("click", () => {
+    if (!dragged && !onDrawing) close();
   });
 
   stage.addEventListener("wheel", onWheel, { passive: false });
@@ -259,7 +299,6 @@ function build() {
   stage.addEventListener("dblclick", (event) => {
     zoomAt(1.8, at(event));
   });
-  overlay.addEventListener("keydown", onKey);
   document.body.appendChild(overlay);
 }
 
@@ -274,7 +313,12 @@ export function open(box) {
   shown = box;
   restore = document.activeElement;
   dragged = false;
+  onDrawing = false;
   overlay.classList.add("open");
+  // Nothing in the overlay holds focus once a pan has begun — a press on the
+  // stage puts it on the body — so the keys have to be watched from the
+  // document, ahead of the page's own Escape, which this one supersedes.
+  document.addEventListener("keydown", onKey, true);
   // The page behind must not scroll under a diagram being dragged over it.
   document.body.style.overflow = "hidden";
   fit();
@@ -283,6 +327,7 @@ export function open(box) {
 
 export function close() {
   if (!overlay || !shown) return;
+  document.removeEventListener("keydown", onKey, true);
   overlay.classList.remove("open");
   canvas.innerHTML = "";
   document.body.style.overflow = "";
@@ -382,6 +427,7 @@ function onDown(event) {
   if (event.button !== undefined && event.button !== 0) return;
   pointers.set(event.pointerId, at(event));
   dragged = false;
+  onDrawing = !!(event.target.closest && event.target.closest(".mdrfc-zoom-canvas"));
   if (pointers.size === 2) pinch = span();
   // Capturing keeps a drag alive past the edge of the stage. It is the last
   // thing done, and forgiven if it fails, so a browser that refuses it still
@@ -434,26 +480,32 @@ function span() {
   };
 }
 
+const PAN_KEYS = { ArrowLeft: [1, 0], ArrowRight: [-1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
+
+/**
+ * The lightbox is modal, so a key it answers is a key the page behind must not
+ * see: Escape closes the diagram rather than the settings panel, and the arrows
+ * pan rather than scroll.
+ */
 function onKey(event) {
+  if (!shown) return;
   const key = event.key;
-  if (key === "Escape") return close();
-  if (key === "Tab") {
+  const pan = PAN_KEYS[key];
+  if (key === "Escape") close();
+  else if (key === "Tab") {
     // The overlay covers the page, so tabbing must stay inside it.
     const stops = [...overlay.querySelectorAll("button")];
     const here = stops.indexOf(document.activeElement);
     const next = event.shiftKey ? here - 1 : here + 1;
-    event.preventDefault();
     stops[(next + stops.length) % stops.length].focus();
-    return;
-  }
-  if (key === "+" || key === "=") return zoomAt(1.3, mid());
-  if (key === "-" || key === "_") return zoomAt(1 / 1.3, mid());
-  if (key === "0") return fit();
-  const pan = { ArrowLeft: [1, 0], ArrowRight: [-1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
-  if (pan[key]) {
-    event.preventDefault();
-    view.x += pan[key][0] * PAN_STEP;
-    view.y += pan[key][1] * PAN_STEP;
+  } else if (key === "+" || key === "=") zoomAt(1.3, mid());
+  else if (key === "-" || key === "_") zoomAt(1 / 1.3, mid());
+  else if (key === "0") fit();
+  else if (pan) {
+    view.x += pan[0] * PAN_STEP;
+    view.y += pan[1] * PAN_STEP;
     apply();
-  }
+  } else return;
+  event.preventDefault();
+  event.stopPropagation();
 }

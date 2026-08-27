@@ -210,9 +210,19 @@ export function highlightMatches(query, opts = {}) {
   const terms = contentTerms(query);
   if (!supported || !root) return false;
 
-  const map = textMap(root);
+  let map = textMap(root);
   if (!map.nodes.length) return false;
-  const spans = terms.length ? occurrences(map, terms) : [];
+  let spans = terms.length ? occurrences(map, terms) : [];
+
+  // A hit inside a diagram's fence has nothing visible to land on: the drawing
+  // took the place of the source the palette is still listing. Put the source
+  // back and look again, rather than paint nothing and scroll nowhere.
+  if (!spans.length && terms.length && window.mdrfcMermaid) {
+    if (window.mdrfcMermaid.revealSource(terms)) {
+      map = textMap(root);
+      spans = occurrences(map, terms);
+    }
+  }
 
   // A hit whose text the rendering changed beyond recognition still has its
   // heading, so the row is banded even when no term survives to be painted.
