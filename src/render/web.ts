@@ -834,9 +834,14 @@ function htmlTemplate(
   // ── collapse ────────────────────────────────────────────────
   function collapsed(){ return root.classList.contains("mdrfc-sidebar-collapsed"); }
   function setCollapsed(v, persist){
+    var moved = collapsed() !== v;
     root.classList.toggle("mdrfc-sidebar-collapsed", v);
     toggle.setAttribute("aria-expanded", v ? "false" : "true");
     if(persist) wr("sidebarCollapsed", v ? "1" : "0");
+    // The tree is fixed and slides on a transform, so opening or closing it
+    // moves nothing the observer watches. The room it takes out of the page is
+    // only given back when the placement is worked out again.
+    if(moved && window.mdrfcToc) window.mdrfcToc.relayout();
   }
   setCollapsed(collapsed(), false);
   toggle.addEventListener("click", function(){ setCollapsed(!collapsed(), !isNarrow()); });
@@ -855,6 +860,7 @@ function htmlTemplate(
     width = Math.min(MAX, Math.max(MIN, Math.round(px)));
     root.style.setProperty("--sidebar-w", width + "px");
     if(persist) wr("sidebarW", String(width));
+    if(window.mdrfcToc) window.mdrfcToc.relayout();
   }
   resizer.addEventListener("pointerdown", function(e){
     if(e.button !== 0) return;
@@ -1661,6 +1667,9 @@ ${reloadScript}
     // Diagrams carry the face they were drawn in inside the SVG, so a new one
     // reaches them only by drawing them again.
     window.dispatchEvent(new CustomEvent("mdrfc:font"));
+    // The column is measured in ch, so a new face resizes it against a page
+    // box the placement has already pinned. Same reason as the size slider.
+    if(window.mdrfcToc) window.mdrfcToc.relayout();
   }
   function applySize(s){
     if(!s){ root.style.removeProperty("--font-size"); sizeVal.textContent = ""; }
@@ -1669,9 +1678,14 @@ ${reloadScript}
     sizeNum.value = s || 14;
     if(window.mdrfcToc) window.mdrfcToc.relayout();
   }
+  // The placement pins the page box to the document's own width, so a wider
+  // column has nowhere to grow into until the box is worked out again. Only a
+  // narrower one moves on its own, which is why the observer alone is not
+  // enough here.
   function applyWidth(w){
     if(!w){ root.style.removeProperty("--content-w"); widthVal.textContent = ""; }
     else { root.style.setProperty("--content-w", w+"ch"); widthVal.textContent = "("+w+" cols)"; }
+    if(window.mdrfcToc) window.mdrfcToc.relayout();
   }
   // The server's --width is the default: landing back on it clears the override
   // instead of pinning the column to whatever this run happened to start with.
@@ -1690,7 +1704,11 @@ ${reloadScript}
 
   var f = rd("font", "");
   fontInput.value = f;
-  applyFont(f);
+  // The stack in the stylesheet is already the default, so an unset font has
+  // nothing to apply, nothing to redraw the diagrams for, and no placement to
+  // ask for. A stored one does: it reaches the page after the column was last
+  // placed, in the face the column is measured in.
+  if(f) applyFont(f);
 
   var s = rd("size", "");
   if(s) applySize(s); else { sizeRange.value = 14; sizeNum.value = 14; }
