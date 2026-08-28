@@ -14,6 +14,12 @@ import { listSystemFonts } from "./fonts.ts";
 import { isExtendedQuery, search } from "./search.ts";
 import { FAVICON_PATH, FAVICON_SVG } from "./favicon.ts";
 import { readWebfont, WEBFONT_PATH, WEBFONT_ROOT } from "./webfont.ts";
+import {
+  MERMAID_INIT_URL,
+  MERMAID_ROOT,
+  MERMAID_URL,
+  readMermaidBundle,
+} from "./mermaid.ts";
 import type { RenderOpts } from "./util.ts";
 
 // The browser-side runtime, read off disk at startup instead of imported: these
@@ -25,6 +31,7 @@ const preactSrc = readFileSync(
 );
 const paletteSrc = readFileSync(new URL("./client/palette.js", import.meta.url), "utf8");
 const highlightSrc = readFileSync(new URL("./client/highlight.js", import.meta.url), "utf8");
+const mermaidInitSrc = readFileSync(new URL("./client/mermaid.js", import.meta.url), "utf8");
 
 export interface ServerOpts extends RenderOpts {
   content: string;
@@ -323,6 +330,21 @@ export async function startServer(opts: ServerOpts): Promise<void> {
       return;
     }
 
+    // The mermaid browser build. Cached indefinitely for the same reason the
+    // faces are — 3.5 MB that only changes when mdrfc does, which changes the
+    // URL. Only a page with a diagram on it ever asks.
+    if (u.pathname.startsWith(MERMAID_ROOT)) {
+      const bundle = u.pathname === MERMAID_URL ? readMermaidBundle() : null;
+      if (bundle) {
+        sendBytes(res, 200, "text/javascript; charset=utf-8", bundle, {
+          "cache-control": "max-age=31536000, immutable",
+        });
+      } else {
+        send(res, 404, "text/plain; charset=utf-8", "no mermaid bundle");
+      }
+      return;
+    }
+
     // Installed font families (monospace flagged) for the settings panel
     if (u.pathname === "/_fonts") {
       send(res, 200, "application/json; charset=utf-8", JSON.stringify(listSystemFonts()));
@@ -341,7 +363,9 @@ export async function startServer(opts: ServerOpts): Promise<void> {
           ? paletteSrc
           : u.pathname === "/_highlight.js"
             ? highlightSrc
-            : null;
+            : u.pathname === MERMAID_INIT_URL
+              ? mermaidInitSrc
+              : null;
     if (clientModule !== null) {
       send(res, 200, "text/javascript; charset=utf-8", clientModule, {
         "cache-control": "no-store",

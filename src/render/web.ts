@@ -10,6 +10,7 @@ import {
 } from "../util.ts";
 import { FAVICON_PATH } from "../favicon.ts";
 import { WEBFONT_CSS, WEBFONT_FAMILY, WEBFONT_PRELOAD } from "../webfont.ts";
+import { MERMAID_INIT_URL, MERMAID_URL } from "../mermaid.ts";
 import { ANNOUNCEMENTS } from "../announce.ts";
 import {
   flattenFrontmatter,
@@ -165,6 +166,16 @@ export function renderWeb(
   currentRel?: string
 ): string {
   const marked = new Marked();
+  // ```mermaid becomes a diagram container rather than a code block; every
+  // other fence keeps marked's own output, syntax class and all.
+  marked.use({
+    renderer: {
+      code(token) {
+        const lang = (token.lang ?? "").trim().split(/\s+/)[0].toLowerCase();
+        return lang === "mermaid" ? mermaidBlock(token.text) : false;
+      },
+    },
+  });
   const fm = parseFrontmatter(md);
   const body = addCodeBlockTools(
     addHeadingAnchors(marked.parse(fm.content) as string)
@@ -181,7 +192,8 @@ export function renderWeb(
     sidebar,
     documentTitle(fm.data, body, currentRel || opts.source),
     opts.dirMode === true,
-    opts.toc ?? DEFAULT_TOC
+    opts.toc ?? DEFAULT_TOC,
+    body.includes("mdrfc-mermaid")
   );
 }
 
@@ -251,15 +263,49 @@ function addHeadingAnchors(html: string): string {
  * delegated listener, which also covers blocks that arrive via in-place nav.
  */
 function addCodeBlockTools(html: string): string {
-  const btn = (act: string, label: string, extra = "") =>
-    `<button type="button" class="mdrfc-code-btn" data-act="${act}" title="${label}" aria-label="${label}"${extra}>${act}</button>`;
   return html.replace(
     /<pre(\s[^>]*)?>([\s\S]*?)<\/pre>/g,
-    (_m, attrs: string | undefined, inner: string) =>
-      `<div class="mdrfc-code"><div class="mdrfc-code-tools" data-mdrfc-chrome>` +
-      btn("wrap", "Toggle line wrapping", ' aria-pressed="false"') +
-      btn("copy", "Copy code") +
-      `</div><pre${attrs ?? ""}>${inner}</pre></div>`
+    (m, attrs: string | undefined, inner: string) =>
+      // A diagram brings its own container and its own toolbar.
+      (attrs ?? "").includes(MERMAID_MARK)
+        ? m
+        : `<div class="mdrfc-code"><div class="mdrfc-code-tools" data-mdrfc-chrome>` +
+          codeBtn("wrap", "Toggle line wrapping", ' aria-pressed="false"') +
+          codeBtn("copy", "Copy code") +
+          `</div><pre${attrs ?? ""}>${inner}</pre></div>`
+  );
+}
+
+/** A button for a code block's or diagram's top-right toolbar. */
+function codeBtn(act: string, label: string, extra = ""): string {
+  return (
+    `<button type="button" class="mdrfc-code-btn" data-act="${act}"` +
+    ` title="${label}" aria-label="${label}"${extra}>${act}</button>`
+  );
+}
+
+/** Marks the source `<pre>` of a diagram, so the code block tools skip it. */
+const MERMAID_MARK = "data-mdrfc-mermaid";
+
+/**
+ * A ```mermaid fence, as its source plus an empty slot for the drawing.
+ *
+ * Sending the source and letting the browser replace it is what makes every
+ * way this can fall short read as plain markdown: no bundle on disk, no
+ * JavaScript, a diagram with a syntax error. The `source` button swaps back to
+ * it once a drawing has taken its place.
+ */
+function mermaidBlock(source: string): string {
+  return (
+    `<div class="mdrfc-code mdrfc-mermaid">` +
+    `<div class="mdrfc-code-tools" data-mdrfc-chrome>` +
+    codeBtn("open", "Open the diagram full screen") +
+    codeBtn("source", "Show the diagram source", ' aria-pressed="false"') +
+    codeBtn("copy", "Copy diagram source") +
+    `</div>` +
+    `<pre ${MERMAID_MARK}><code class="language-mermaid">${esc(source)}</code></pre>` +
+    `<div class="mdrfc-mermaid-out" data-mdrfc-chrome></div>` +
+    `</div>`
   );
 }
 
@@ -284,7 +330,8 @@ function htmlTemplate(
   sidebar = "",
   docTitle?: string,
   dirMode = false,
-  tocMode: TocMode = DEFAULT_TOC
+  tocMode: TocMode = DEFAULT_TOC,
+  hasMermaid = false
 ): string {
   // Live reload. The stream is told which document this tab is showing, so an
   // edit somewhere else in the tree doesn't pull it out from under the reader;
@@ -355,6 +402,15 @@ function htmlTemplate(
   // long and coming back to it — through a live reload, the sidebar, the back
   // button, or a server started again days later — used to start over at the
   // top. Sits alongside the sidebar's own remembered scroll.
+  // In directory mode the module always loads, because in-place navigation can
+  // bring a diagram to a page that started without one. Elsewhere it is only
+  // asked for by a document that has one — and it is what fetches the 3.5 MB
+  // bundle, so a document without a diagram pays for neither.
+  const mermaidScript =
+    hasMermaid || dirMode
+      ? `\n<script type="module" src="${MERMAID_INIT_URL}"></script>`
+      : "";
+
   const scrollScript = `<script>
 (function(){
   var KEY = "mdrfc.scroll:";
@@ -1066,6 +1122,59 @@ ${WEBFONT_CSS}
   .mdrfc-code-btn:hover { color: var(--fg); }
   .mdrfc-code-btn[aria-pressed="true"] { color: var(--link); border-color: var(--link); }
   .mdrfc-code.wrap pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+  /* ── mermaid diagrams ────────────────────────────────────────
+     The source is what the server sent, so it is what shows until a drawing
+     exists to take its place. The source button swaps back to it. */
+  .mdrfc-mermaid .mdrfc-mermaid-out { display: none; }
+  .mdrfc-mermaid:not(.rendered) .mdrfc-code-btn[data-act="source"] { display: none; }
+  .mdrfc-mermaid.rendered > pre { display: none; }
+  .mdrfc-mermaid.rendered .mdrfc-mermaid-out {
+    display: block; margin: 1em 0; overflow-x: auto;
+  }
+  .mdrfc-mermaid.rendered.show-source > pre { display: block; }
+  .mdrfc-mermaid.rendered.show-source .mdrfc-mermaid-out { display: none; }
+  .mdrfc-mermaid-out svg { max-width: 100%; height: auto; }
+  /* The column bounds a diagram in the flow, so a big one opens instead. */
+  .mdrfc-mermaid.rendered .mdrfc-mermaid-out { cursor: zoom-in; }
+  .mdrfc-mermaid.rendered .mdrfc-mermaid-out:focus-visible {
+    outline: 2px solid var(--link); outline-offset: 3px;
+  }
+  .mdrfc-mermaid:not(.rendered) .mdrfc-code-btn[data-act="open"] { display: none; }
+
+  /* ── the diagram lightbox ────────────────────────────────── */
+  #mdrfc-zoom { position: fixed; inset: 0; z-index: 200; display: none; }
+  #mdrfc-zoom.open { display: block; }
+  #mdrfc-zoom .mdrfc-zoom-stage {
+    position: absolute; inset: 0; overflow: hidden; background: var(--bg);
+    /* The gestures are the overlay's own; the browser must not also act:
+       no scroll or pinch, and no text selected out of the drawing by a pan. */
+    touch-action: none; cursor: grab;
+    -webkit-user-select: none; user-select: none;
+  }
+  #mdrfc-zoom .mdrfc-zoom-stage:active { cursor: grabbing; }
+  #mdrfc-zoom .mdrfc-zoom-canvas { transform-origin: 0 0; will-change: transform; }
+  #mdrfc-zoom .mdrfc-zoom-canvas svg { display: block; width: 100%; height: 100%; }
+  #mdrfc-zoom .mdrfc-zoom-tools {
+    position: absolute; top: 12px; right: 12px; z-index: 1;
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); font-size: .8em;
+  }
+  #mdrfc-zoom .mdrfc-zoom-tools button {
+    font: inherit; font-family: inherit; min-width: 2.2em; padding: 1px 6px;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: var(--code-bg); color: var(--muted); cursor: pointer;
+  }
+  #mdrfc-zoom .mdrfc-zoom-tools button:hover { color: var(--fg); }
+  #mdrfc-zoom .mdrfc-zoom-at {
+    min-width: 4em; text-align: center; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .mdrfc-mermaid-err {
+    margin: 0 0 1em; font-size: .85em; color: var(--muted);
+    border-left: 2px solid var(--border); padding-left: .6em;
+  }
   table { border-collapse: collapse; margin: 1em 0; font-size: 0.92em; }
   th, td { border: 1px solid var(--border); padding: 0.4em 0.7em; text-align: left; }
   th { background: var(--code-bg); }
@@ -1509,8 +1618,8 @@ ${body}
 <div id="mdrfc-notice" role="status" aria-live="polite" hidden></div>
 
 ${reloadScript}
-<script>window.__mdrfc = { dirMode: ${dirMode} };</script>
-<script type="module" src="/_palette.js"></script>
+<script>window.__mdrfc = { dirMode: ${dirMode}, mermaidUrl: ${embed(MERMAID_URL)} };</script>
+<script type="module" src="/_palette.js"></script>${mermaidScript}
 <script>
 (function(){
   var K = "mdrfc.";
@@ -1542,10 +1651,16 @@ ${reloadScript}
     if(v==="light"||v==="dark") root.setAttribute("data-theme", v);
     else root.removeAttribute("data-theme");
     themeSel.value = v;
+    // Diagrams carry their colours inside the SVG, so they have to be drawn
+    // again rather than re-styled.
+    window.dispatchEvent(new CustomEvent("mdrfc:theme"));
   }
   function applyFont(f){
     var fam = f ? '"'+f.replace(/"/g,"")+'", "${WEBFONT_FAMILY}", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : "";
     document.body.style.fontFamily = fam;
+    // Diagrams carry the face they were drawn in inside the SVG, so a new one
+    // reaches them only by drawing them again.
+    window.dispatchEvent(new CustomEvent("mdrfc:font"));
   }
   function applySize(s){
     if(!s){ root.style.removeProperty("--font-size"); sizeVal.textContent = ""; }
@@ -1894,6 +2009,18 @@ ${reloadScript}
     if(btn.dataset.act === "wrap"){
       var on = box.classList.toggle("wrap");
       btn.setAttribute("aria-pressed", on ? "true" : "false");
+      return;
+    }
+    if(btn.dataset.act === "open"){
+      if(window.mdrfcMermaid) window.mdrfcMermaid.zoom(box);
+      return;
+    }
+    if(btn.dataset.act === "source"){
+      var shown = box.classList.toggle("show-source");
+      btn.setAttribute("aria-pressed", shown ? "true" : "false");
+      // Search paints what the reader can see, and the source just changed
+      // which of the two that is.
+      if(window.mdrfcMermaid) window.mdrfcMermaid.syncSource(box);
       return;
     }
     var code = box.querySelector("pre");
