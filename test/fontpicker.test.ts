@@ -49,6 +49,12 @@ function panelMarkup(): string {
 
 let input: HTMLInputElement;
 let list: HTMLElement;
+/**
+ * How many times the picker has asked for the placement to be worked out
+ * again. The real one is in the placement script; here it only has to be
+ * countable.
+ */
+let relayouts: number;
 
 function rows(): string[] {
   return [...list.querySelectorAll("li[role=option] .sample")].map((el) => el.textContent ?? "");
@@ -73,6 +79,12 @@ async function enter() {
 async function mount(fonts: { name: string; mono: boolean; bundled?: boolean }[]) {
   globalThis.fetch = (async () => new Response(JSON.stringify(fonts))) as typeof fetch;
   document.body.innerHTML = pageStyle() + panelMarkup();
+  relayouts = 0;
+  (window as any).mdrfcToc = {
+    relayout() {
+      relayouts++;
+    },
+  };
   new Function(panelScript())();
 
   document.getElementById("mdrfc-gear")!.dispatchEvent(new Event("click", { bubbles: true }));
@@ -127,6 +139,31 @@ describe("font picker", () => {
     expect(localStorage.getItem("mdrfc.font")).toBe("Monaco");
     expect(document.body.style.fontFamily.startsWith("Monaco")).toBe(true);
     expect(list.childElementCount).toBe(0); // list closes after a pick
+  });
+
+  /**
+   * The column is measured in ch, so a new face wants a width the page box the
+   * placement pinned at the old one does not have. Nothing the observer
+   * watches moves, so a wider face wraps at fewer columns than asked for until
+   * the box is worked out again.
+   */
+  test("a new family asks for the page box to be worked out again", async () => {
+    expect(relayouts).toBe(0); // an unset font applies nothing, so boot asks for nothing
+    await type("mona");
+    (list.querySelector("li[role=option]") as HTMLElement).dispatchEvent(
+      new Event("click", { bubbles: true }),
+    );
+    expect(relayouts).toBe(1);
+    await type("");
+    await enter(); // and so does going back to the system default
+    expect(relayouts).toBe(2);
+  });
+
+  test("a stored family asks for it at boot, after the column was last placed", async () => {
+    localStorage.setItem("mdrfc.font", "Monaco");
+    await mount(FONTS);
+    expect(document.body.style.fontFamily.startsWith("Monaco")).toBe(true);
+    expect(relayouts).toBe(1);
   });
 
   test("names the family an empty field falls back to", () => {
