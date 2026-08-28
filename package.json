@@ -1,6 +1,6 @@
 {
   "name": "mdrfc",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Simple markdown viewer — terminal + web. RFC-style monospace, 72-col width.",
   "keywords": [
     "markdown",
