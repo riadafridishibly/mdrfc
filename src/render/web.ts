@@ -1669,9 +1669,14 @@ ${reloadScript}
     sizeNum.value = s || 14;
     if(window.mdrfcToc) window.mdrfcToc.relayout();
   }
+  // The placement pins the page box to the document's own width, so a wider
+  // column has nowhere to grow into until the box is worked out again. Only a
+  // narrower one moves on its own, which is why the observer alone is not
+  // enough here.
   function applyWidth(w){
     if(!w){ root.style.removeProperty("--content-w"); widthVal.textContent = ""; }
     else { root.style.setProperty("--content-w", w+"ch"); widthVal.textContent = "("+w+" cols)"; }
+    if(window.mdrfcToc) window.mdrfcToc.relayout();
   }
   // The server's --width is the default: landing back on it clears the override
   // instead of pinning the column to whatever this run happened to start with.
