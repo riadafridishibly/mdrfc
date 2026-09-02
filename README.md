@@ -52,6 +52,8 @@ session with no display. Pass `--web` to open a tab anyway.
   down the page. Move it with `--toc` or the settings panel.
 - **Heading links** — click the `#` beside a heading to jump there and copy the
   link. Slugs match GitHub's.
+- **Images** — `![](diagram.png)` loads the file from beside the document, and
+  redraws when you save over it.
 - **Reading position** — each document reopens where you left off.
 - **Settings** — the gear button: theme, font, text size, width, table of
   contents. All remembered in your browser.

@@ -1,8 +1,9 @@
-import { createServer, type ServerResponse } from "node:http";
-import { watch, readFileSync, readdirSync } from "node:fs";
+import { createServer, type Server, type ServerResponse } from "node:http";
+import { watch, readFileSync, readdirSync, type FSWatcher } from "node:fs";
 import {
   dirname,
   basename,
+  extname,
   resolve as pathResolve,
   relative as pathRelative,
   sep,
@@ -47,6 +48,64 @@ interface ReloadClient {
   res: ServerResponse;
   /** Path relative to baseDir, "/"-separated, as the watcher reports changes. */
   rel: string;
+}
+
+/**
+ * Files served alongside the markdown, by extension. Images only: a document
+ * links to them, so they have to come off disk, and the same is not true of
+ * everything else sitting in the directory. Anything absent from this table is
+ * not reachable over the server.
+ */
+const ASSET_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".apng": "image/apng",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".svg": "image/svg+xml",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+};
+
+/** The content type to serve a path as, or null if it is not a served asset. */
+export function assetType(path: string): string | null {
+  return ASSET_TYPES[extname(path).toLowerCase()] ?? null;
+}
+
+/**
+ * Headers that keep a served asset inert. `.svg` is the reason: it is a
+ * document, not a bitmap, and one sitting in the tree would otherwise run its
+ * own script on this origin the moment a reader clicked through to it — which
+ * is enough to read every document here over `/_search` and post it onward.
+ * Nothing an image legitimately needs is denied: shapes, inline CSS and
+ * embedded data are all still allowed.
+ */
+const ASSET_HEADERS: Record<string, string> = {
+  // Not cached: the page live-reloads, and a diagram redrawn on disk has to
+  // arrive with it.
+  "cache-control": "no-store",
+  // Keeps the declared type authoritative.
+  "x-content-type-options": "nosniff",
+  "content-security-policy":
+    "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox",
+};
+
+/**
+ * A watcher path the markdown scan would never have listed: anything hidden or
+ * inside a dependency/VCS directory. `npm install` or a branch switch writes
+ * thousands of files under those, and without this every one of them carrying
+ * an image extension would reload every open tab.
+ */
+export function isIgnoredPath(rel: string): boolean {
+  // Only the directories are judged. The last segment is the file itself, and
+  // a hidden *file* stays watched: `![](.icon.png)` is served, so it has to
+  // reload like any other image.
+  return rel
+    .split(/[\\/]/)
+    .slice(0, -1)
+    .some((seg) => SKIP_DIRS.has(seg) || (seg.startsWith(".") && seg !== "." && seg !== ".."));
 }
 
 /**
@@ -119,12 +178,14 @@ function safeDecode(s: string): string {
 /**
  * Start local HTTP server serving the rendered markdown.
  * Live-reload over server-sent events when a filesystem path is being served.
+ * Resolves with the listening server; closing it stops the watchers too.
  */
-export async function startServer(opts: ServerOpts): Promise<void> {
+export async function startServer(opts: ServerOpts): Promise<Server> {
   const port = await findFreePort(opts.port);
   const url = `http://localhost:${port}`;
 
   const clients = new Set<ReloadClient>();
+  const watchers: FSWatcher[] = [];
 
   // Base directory used to resolve internal (relative) markdown links.
   // Explicit baseDir wins (directory mode); otherwise derive from source file.
@@ -143,11 +204,11 @@ export async function startServer(opts: ServerOpts): Promise<void> {
   const rootRel = sourceFile ? relOf(sourceFile) : "";
 
   /**
-   * Resolve a request path to a markdown file under baseDir.
-   * Returns null if not allowed (stdin mode, traversal, non-md).
+   * Resolve a request path to somewhere inside baseDir.
+   * Returns null if not allowed (stdin mode, root, traversal).
    * Takes an already-decoded path; the root path is the source file's.
    */
-  function resolveRequestedFile(pathname: string): string | null {
+  function resolveUnderBase(pathname: string): string | null {
     if (!baseDir) return null;
     if (pathname === "/") return null; // root serves the source file
     // strip leading slash so it resolves relative to baseDir
@@ -155,7 +216,13 @@ export async function startServer(opts: ServerOpts): Promise<void> {
     // path traversal guard: must stay inside baseDir
     const inside = pathRelative(baseDir, abs);
     if (inside.startsWith("..") || inside.includes(`..${sep}`)) return null;
-    if (!abs.toLowerCase().endsWith(".md")) return null;
+    return abs;
+  }
+
+  /** Resolve a request path to a markdown file under baseDir. */
+  function resolveRequestedFile(pathname: string): string | null {
+    const abs = resolveUnderBase(pathname);
+    if (!abs || !abs.toLowerCase().endsWith(".md")) return null;
     return abs;
   }
 
@@ -181,11 +248,16 @@ export async function startServer(opts: ServerOpts): Promise<void> {
   if (baseDir) {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const touched = new Set<string>();
+    // Which documents embed a given image is not known here, so a changed one
+    // is tracked as a single flag and reloads every tab.
+    let assetTouched = false;
 
     const flush = (): void => {
       timer = null;
       const changed = new Set(touched);
       touched.clear();
+      const assets = assetTouched;
+      assetTouched = false;
 
       let structural = false;
       if (opts.dirMode && baseDir) {
@@ -197,27 +269,32 @@ export async function startServer(opts: ServerOpts): Promise<void> {
       for (const client of clients) {
         // A new or deleted file changes every page's sidebar, so every tab
         // has to come back for it; an edit only concerns whoever is reading it.
-        if (structural || changed.has(client.rel)) client.res.write("data: reload\n\n");
+        if (structural || assets || changed.has(client.rel))
+          client.res.write("data: reload\n\n");
       }
     };
 
     const onChange = (_event: string, name: string | Buffer | null): void => {
       const file = typeof name === "string" ? name : name?.toString();
-      if (!file || !file.toLowerCase().endsWith(".md")) return;
-      touched.add(file.split(sep).join("/"));
+      if (!file) return;
+      if (isIgnoredPath(file)) return;
+      const isMd = file.toLowerCase().endsWith(".md");
+      if (!isMd && !assetType(file)) return;
+      if (isMd) touched.add(file.split(sep).join("/"));
+      else assetTouched = true;
       // One save is several filesystem events; answer the last of them.
       if (timer) clearTimeout(timer);
       timer = setTimeout(flush, 80);
     };
 
     try {
-      watch(baseDir, { recursive: opts.dirMode === true }, onChange);
+      watchers.push(watch(baseDir, { recursive: opts.dirMode === true }, onChange));
     } catch {
       // Recursive watching is not available everywhere; the source file alone
       // is worse but better than nothing.
       if (sourceFile) {
         try {
-          watch(sourceFile, onChange);
+          watchers.push(watch(sourceFile, onChange));
         } catch {
           /* no live reload */
         }
@@ -386,9 +463,30 @@ export async function startServer(opts: ServerOpts): Promise<void> {
       return;
     }
 
+    // Images referenced from a document, resolved against the directory being
+    // served. A missing one is a 404 rather than the fallthrough below, which
+    // would hand the browser a whole HTML document as the body of an <img>.
+    const decoded = safeDecode(u.pathname);
+    const type = assetType(decoded);
+    if (type) {
+      const asset = resolveUnderBase(decoded);
+      let bytes: Buffer | null = null;
+      try {
+        if (asset) bytes = readFileSync(asset);
+      } catch {
+        bytes = null; // missing, a directory, unreadable
+      }
+      if (bytes) {
+        sendBytes(res, 200, type, bytes, ASSET_HEADERS);
+      } else {
+        send(res, 404, "text/plain; charset=utf-8", "no such file");
+      }
+      return;
+    }
+
     // Internal link routing: serve a sibling/nested .md file relative
     // to the source file's directory. Root path serves the source.
-    const requested = resolveRequestedFile(safeDecode(u.pathname));
+    const requested = resolveRequestedFile(decoded);
     if (requested) {
       const currentRel = relOf(requested);
       try {
@@ -403,10 +501,20 @@ export async function startServer(opts: ServerOpts): Promise<void> {
     sendHtml(res, rootMarkdown(), opts.dirMode ? rootRel : "");
   });
 
+  server.on("close", () => {
+    for (const w of watchers) w.close();
+  });
+
   await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
+    // A failed listen never emits "close", so the watchers opened above would
+    // otherwise hold the event loop open for a server that never started.
+    const fail = (err: unknown): void => {
+      for (const w of watchers) w.close();
+      reject(err);
+    };
+    server.once("error", fail);
     server.listen(port, () => {
-      server.off("error", reject);
+      server.off("error", fail);
       resolve();
     });
   });
@@ -433,4 +541,6 @@ export async function startServer(opts: ServerOpts): Promise<void> {
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
+
+  return server;
 }
