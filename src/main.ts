@@ -109,7 +109,7 @@ async function main() {
       web: { type: "boolean", short: "w" },
       term: { type: "boolean", short: "t", default: false },
       "no-web": { type: "boolean", default: false },
-      port: { type: "string", default: String(DEFAULT_PORT) },
+      port: { type: "string", short: "p", default: String(DEFAULT_PORT) },
       open: { type: "boolean", default: true },
       "no-open": { type: "boolean", default: false },
       color: { type: "boolean", default: true },
